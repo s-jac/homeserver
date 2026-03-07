@@ -1,0 +1,16 @@
+{
+  "auth": {
+    "password": "changeme",
+    "jwt_secret": "generate-with: python3 -c \"import secrets; print(secrets.token_hex(32))\"",
+    "token_expiry_hours": 168
+  },
+  "email": {
+    "enabled": false,
+    "from_address": "your.email@gmail.com",
+    "to_address": "your.email@gmail.com",
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "username": "your.email@gmail.com",
+    "app_password": "xxxx xxxx xxxx xxxx"
+  }
+}

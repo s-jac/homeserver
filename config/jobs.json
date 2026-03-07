@@ -1,0 +1,19 @@
+{
+  "jobs": [
+    {
+      "id": "gym_thursday_7am",
+      "name": "Thursday 7am Class",
+      "enabled": true,
+      "script": "scripts/gym_book.py",
+      "cron": "1 0 * * MON",
+      "description": "Books Thursday 7am gym class (runs Monday 00:01)",
+      "params": {
+        "class_day": "thursday",
+        "class_time": "07:00"
+      },
+      "last_run": null,
+      "last_status": null,
+      "last_message": null
+    }
+  ]
+}

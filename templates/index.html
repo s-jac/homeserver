@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HomeServer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f2f2f7; color: #1c1c1e; }
+    header { background: #1c1c1e; color: #fff; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 18px; font-weight: 600; }
+    #logout-btn { background: none; border: 1px solid #555; color: #ccc; padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+    main { padding: 16px; max-width: 480px; margin: 0 auto; }
+    section { margin-bottom: 24px; }
+    h2 { font-size: 13px; font-weight: 600; color: #8e8e93; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; padding-left: 4px; }
+    .card { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .card-row { padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #f2f2f7; }
+    .card-row:last-child { border-bottom: none; }
+    .card-row .label { font-size: 15px; }
+    .card-row .sub { font-size: 12px; color: #8e8e93; margin-top: 2px; }
+    .toggle { position: relative; width: 51px; height: 31px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; inset: 0; background: #ccc; border-radius: 31px; transition: .3s; cursor: pointer; }
+    .slider:before { content: ''; position: absolute; width: 27px; height: 27px; left: 2px; top: 2px; background: white; border-radius: 50%; transition: .3s; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+    input:checked + .slider { background: #34c759; }
+    input:checked + .slider:before { transform: translateX(20px); }
+    .badge { font-size: 12px; padding: 3px 8px; border-radius: 10px; font-weight: 500; }
+    .badge-success { background: #d1f2d1; color: #1a7a1a; }
+    .badge-error { background: #fde0e0; color: #c0392b; }
+    .badge-none { background: #e5e5ea; color: #8e8e93; }
+    .run-btn { background: #007aff; color: white; border: none; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    .run-btn:disabled { background: #b0c8f0; cursor: not-allowed; }
+    input[type=text], input[type=password], input[type=email] {
+      width: 100%; padding: 10px 12px; border: 1px solid #d1d1d6; border-radius: 10px;
+      font-size: 15px; margin-bottom: 10px; background: #fafafa;
+    }
+    .btn { width: 100%; padding: 13px; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 4px; }
+    .btn-primary { background: #007aff; color: white; }
+    .btn-secondary { background: #e5e5ea; color: #1c1c1e; }
+    #login-screen { max-width: 340px; margin: 80px auto; padding: 0 20px; }
+    #login-screen h1 { font-size: 26px; font-weight: 700; margin-bottom: 8px; text-align: center; }
+    #login-screen p { color: #8e8e93; text-align: center; margin-bottom: 28px; font-size: 15px; }
+    #error-msg { color: #c0392b; font-size: 14px; text-align: center; margin-top: 10px; min-height: 20px; }
+    .hidden { display: none !important; }
+    .info-text { font-size: 13px; color: #8e8e93; padding: 4px; }
+  </style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-screen">
+  <h1>HomeServer</h1>
+  <p>Enter your password to continue</p>
+  <input type="password" id="password-input" placeholder="Password" autocomplete="current-password">
+  <button class="btn btn-primary" onclick="login()">Sign In</button>
+  <div id="error-msg"></div>
+</div>
+
+<!-- Main app -->
+<div id="app-screen" class="hidden">
+  <header>
+    <h1>HomeServer</h1>
+    <button id="logout-btn" onclick="logout()">Sign out</button>
+  </header>
+  <main>
+    <section>
+      <h2>Scheduled Jobs</h2>
+      <div class="card" id="jobs-list">
+        <div class="card-row"><span class="label">Loading...</span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Email Notifications</h2>
+      <div class="card">
+        <div class="card-row">
+          <div>
+            <div class="label">Enable email alerts</div>
+            <div class="sub">Gmail SMTP</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="email-enabled-toggle" onchange="saveEmailEnabled()">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="card-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+          <input type="email" id="email-address" placeholder="Gmail address" autocomplete="email">
+          <input type="password" id="email-app-password" placeholder="App password (leave blank to keep)" autocomplete="off">
+          <button class="btn btn-secondary" onclick="saveEmailSettings()">Save email settings</button>
+          <div id="email-save-msg" class="info-text"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Security</h2>
+      <div class="card">
+        <div class="card-row" style="flex-direction:column; align-items:stretch; gap:8px;">
+          <input type="password" id="new-password" placeholder="New password" autocomplete="new-password">
+          <button class="btn btn-secondary" onclick="changePassword()">Change password</button>
+          <div id="pw-save-msg" class="info-text"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  const TOKEN_KEY = 'hs_token';
+
+  function getToken() { return localStorage.getItem(TOKEN_KEY); }
+  function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+  async function api(method, path, body) {
+    const opts = {
+      method,
+      headers: { 'Authorization': 'Bearer ' + getToken(), 'Content-Type': 'application/json' }
+    };
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    if (res.status === 401) { showLogin(); return null; }
+    return res.json();
+  }
+
+  async function login() {
+    const pw = document.getElementById('password-input').value;
+    document.getElementById('error-msg').textContent = '';
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      document.getElementById('error-msg').textContent = data.error || 'Login failed';
+      return;
+    }
+    setToken(data.token);
+    showApp();
+  }
+
+  document.getElementById('password-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') login();
+  });
+
+  function logout() { clearToken(); showLogin(); }
+
+  function showLogin() {
+    document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('app-screen').classList.add('hidden');
+    document.getElementById('password-input').value = '';
+  }
+
+  function showApp() {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app-screen').classList.remove('hidden');
+    loadJobs();
+    loadSettings();
+  }
+
+  async function loadJobs() {
+    const data = await api('GET', '/api/jobs');
+    if (!data) return;
+    const list = document.getElementById('jobs-list');
+    list.innerHTML = '';
+    for (const job of data.jobs) {
+      const row = document.createElement('div');
+      row.className = 'card-row';
+      const statusBadge = job.last_status
+        ? `<span class="badge badge-${job.last_status === 'success' ? 'success' : 'error'}">${job.last_status}</span>`
+        : `<span class="badge badge-none">never run</span>`;
+      const lastRun = job.last_run ? new Date(job.last_run).toLocaleString() : '—';
+      row.innerHTML = `
+        <div style="flex:1; margin-right:12px;">
+          <div class="label">${job.name}</div>
+          <div class="sub">${job.description}</div>
+          <div style="margin-top:6px; display:flex; gap:8px; align-items:center;">
+            ${statusBadge}
+            <span style="font-size:12px; color:#8e8e93;">${lastRun}</span>
+          </div>
+          ${job.last_message ? `<div style="font-size:11px; color:#8e8e93; margin-top:4px; word-break:break-word;">${job.last_message}</div>` : ''}
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+          <label class="toggle">
+            <input type="checkbox" ${job.enabled ? 'checked' : ''} onchange="toggleJob('${job.id}', this.checked)">
+            <span class="slider"></span>
+          </label>
+          <button class="run-btn" id="run-${job.id}" onclick="runJob('${job.id}')">Run</button>
+        </div>
+      `;
+      list.appendChild(row);
+    }
+  }
+
+  async function toggleJob(id, enabled) {
+    await api('PATCH', `/api/jobs/${id}`, { enabled });
+  }
+
+  async function runJob(id) {
+    const btn = document.getElementById(`run-${id}`);
+    btn.disabled = true;
+    btn.textContent = '...';
+    const res = await api('POST', `/api/jobs/${id}/run`);
+    btn.disabled = false;
+    btn.textContent = 'Run';
+    if (res) loadJobs();
+  }
+
+  async function loadSettings() {
+    const data = await api('GET', '/api/settings');
+    if (!data) return;
+    document.getElementById('email-enabled-toggle').checked = data.email.enabled;
+    document.getElementById('email-address').value = data.email.from_address || '';
+  }
+
+  async function saveEmailEnabled() {
+    const enabled = document.getElementById('email-enabled-toggle').checked;
+    await api('PATCH', '/api/settings', { email: { enabled } });
+  }
+
+  async function saveEmailSettings() {
+    const address = document.getElementById('email-address').value.trim();
+    const appPw = document.getElementById('email-app-password').value;
+    const payload = { email: { from_address: address, to_address: address, username: address } };
+    if (appPw) payload.email.app_password = appPw;
+    await api('PATCH', '/api/settings', payload);
+    document.getElementById('email-app-password').value = '';
+    document.getElementById('email-save-msg').textContent = 'Saved.';
+    setTimeout(() => document.getElementById('email-save-msg').textContent = '', 2000);
+  }
+
+  async function changePassword() {
+    const pw = document.getElementById('new-password').value;
+    if (!pw) return;
+    await api('PATCH', '/api/settings', { password: pw });
+    document.getElementById('new-password').value = '';
+    document.getElementById('pw-save-msg').textContent = 'Password updated. You will need to sign in again.';
+    setTimeout(() => { logout(); }, 2000);
+  }
+
+  // Auto-load if token exists
+  if (getToken()) {
+    showApp();
+  }
+</script>
+</body>
+</html>
