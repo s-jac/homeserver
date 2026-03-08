@@ -1,12 +1,27 @@
 {
   "jobs": [
     {
-      "id": "gym_thursday_7am",
-      "name": "Thursday 7am Class",
+      "id": "gym_tuesday_7am",
+      "name": "Tuesday 7am HIIT",
       "enabled": true,
       "script": "scripts/gym_book.py",
-      "cron": "1 0 * * MON",
-      "description": "Books Thursday 7am gym class (runs Monday 00:01)",
+      "cron": "30 0 * * SAT",
+      "description": "Books Tuesday 7am HIIT class (runs Saturday 00:30)",
+      "params": {
+        "class_day": "tuesday",
+        "class_time": "07:00"
+      },
+      "last_run": null,
+      "last_status": null,
+      "last_message": null
+    },
+    {
+      "id": "gym_thursday_7am",
+      "name": "Thursday 7am HIIT",
+      "enabled": true,
+      "script": "scripts/gym_book.py",
+      "cron": "30 0 * * MON",
+      "description": "Books Thursday 7am HIIT class (runs Monday 00:30)",
       "params": {
         "class_day": "thursday",
         "class_time": "07:00"

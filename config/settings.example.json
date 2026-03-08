@@ -4,6 +4,12 @@
     "jwt_secret": "generate-with: python3 -c \"import secrets; print(secrets.token_hex(32))\"",
     "token_expiry_hours": 168
   },
+  "gym": {
+    "first_name": "Sam",
+    "last_name": "Jacobs",
+    "email": "your@email.com",
+    "mobile": "0400000000"
+  },
   "email": {
     "enabled": false,
     "from_address": "your.email@gmail.com",
