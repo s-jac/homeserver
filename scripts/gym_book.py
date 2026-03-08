@@ -423,6 +423,7 @@ def main():
     parser = argparse.ArgumentParser(description="Book a gym HIIT class")
     parser.add_argument("--date", help="Override date to book (YYYY-MM-DD). Skips the enabled check.")
     parser.add_argument("--dry-run", action="store_true", help="Go through all steps but skip the final confirmation POST.")
+    parser.add_argument("--fake", action="store_true", help="Use fake test credentials (real email so you can cancel).")
     args = parser.parse_args()
 
     if args.date:
@@ -442,13 +443,17 @@ def main():
             log.info(f"Job {job_id} is disabled. Skipping.")
             sys.exit(0)
 
-    try:
-        creds = load_gym_creds()
-    except ValueError as e:
-        msg = str(e)
-        log.error(msg)
-        update_job_status(job_id, "error", msg)
-        sys.exit(1)
+    if args.fake:
+        creds = {"first_name": "Gordon", "last_name": "Macdonald", "email": "gordonmaccas@proton.me", "mobile": "0417826417"}
+        log.info("  Using fake test credentials")
+    else:
+        try:
+            creds = load_gym_creds()
+        except ValueError as e:
+            msg = str(e)
+            log.error(msg)
+            update_job_status(job_id, "error", msg)
+            sys.exit(1)
 
     success = book(date_str, creds, dry_run=args.dry_run)
     msg = (
