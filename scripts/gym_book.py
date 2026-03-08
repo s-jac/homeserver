@@ -86,34 +86,21 @@ def extract_csrf(html: str) -> str:
 
 def find_slot_id(data, target_time: str) -> str | None:
     """
-    Recursively search the timeslots AJAX response for a slot matching target_time.
-    Logs the full raw response on first call so we can verify the structure.
-    Returns the slot/schedule ID string, or None if not found.
+    Parse the nabooki timeslots AJAX response.
+    Response shape: {"data": [{"07:00": {"id_staff_resource": "schedule-443559--64112"}}, ...]}
+    The time is the dict key; the schedule ID is extracted from id_staff_resource.
     """
-    if isinstance(data, list):
-        for item in data:
-            result = find_slot_id(item, target_time)
-            if result:
-                return result
-    elif isinstance(data, dict):
-        # Check if this dict represents a slot with a matching time
-        time_val = str(
-            data.get("time") or data.get("start_time") or
-            data.get("start") or data.get("from") or ""
-        )
-        if target_time in time_val:
-            slot_id = (
-                data.get("id") or data.get("schedule_id") or
-                data.get("slot_id") or data.get("schedule_or_finetune_id")
-            )
-            if slot_id:
-                return str(slot_id)
-        # Recurse into nested structures
-        for key in ("slots", "timeslots", "data", "results", "items", "schedule"):
-            if key in data:
-                result = find_slot_id(data[key], target_time)
-                if result:
-                    return result
+    slots_list = data.get("data", []) if isinstance(data, dict) else data
+    for slot_dict in slots_list:
+        if not isinstance(slot_dict, dict):
+            continue
+        for time_key, slot_info in slot_dict.items():
+            if target_time in time_key:
+                id_staff = slot_info.get("id_staff_resource", "")
+                # Format: "schedule-443559--64112" → extract the schedule ID
+                m = re.search(r"schedule-(\d+)", id_staff)
+                if m:
+                    return m.group(1)
     return None
 
 
@@ -160,7 +147,13 @@ def update_job_status(job_id: str, status: str, message: str):
 
 # ── Booking flow ──────────────────────────────────────────────────────────────
 
-def book(date_str: str, creds: dict) -> bool:
+def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
+    mobile_masked = creds["mobile"][:4] + "****" + creds["mobile"][-2:]
+    log.info(
+        f"  Booking as: {creds['first_name']} {creds['last_name']} "
+        f"<{creds['email']}> mob {mobile_masked}"
+    )
+
     session = requests.Session()
     session.headers.update(BROWSER_HEADERS)
     step_params = {"token": TOKEN, "widget_token": WIDGET_TOKEN}
@@ -287,6 +280,14 @@ def book(date_str: str, creds: dict) -> bool:
     log.info(f"  Schedule select → {r.status_code}")
 
     # ── 6. POST step4 → confirm booking ──────────────────────────────────────
+    if dry_run:
+        log.info(
+            f"DRY RUN — would POST step4 to confirm booking for "
+            f"{creds['first_name']} {creds['last_name']} <{creds['email']}> "
+            f"on {date_str} at {TARGET_TIME}. Stopping here."
+        )
+        return True
+
     log.info("Confirming booking (step4)…")
     r = session.post(
         f"{BASE_URL}/booking/step4",
@@ -336,6 +337,7 @@ def book(date_str: str, creds: dict) -> bool:
 def main():
     parser = argparse.ArgumentParser(description="Book a gym HIIT class")
     parser.add_argument("--date", help="Override date to book (YYYY-MM-DD). Skips the enabled check.")
+    parser.add_argument("--dry-run", action="store_true", help="Go through all steps but skip the final confirmation POST.")
     args = parser.parse_args()
 
     if args.date:
@@ -363,7 +365,7 @@ def main():
         update_job_status(job_id, "error", msg)
         sys.exit(1)
 
-    success = book(date_str, creds)
+    success = book(date_str, creds, dry_run=args.dry_run)
     msg = (
         f"Booked {date_str} at {TARGET_TIME}"
         if success
