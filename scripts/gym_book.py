@@ -280,7 +280,20 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
     r.raise_for_status()
     log.info(f"  Schedule select → {r.status_code}")
 
-    # ── 6. POST step4 → confirm booking ──────────────────────────────────────
+    # ── 6. GET step4 → fresh CSRF for the confirmation form ─────────────────
+    log.info("Loading step4 form…")
+    r = session.get(
+        f"{BASE_URL}/booking/step4",
+        params=step_params,
+        headers={"Referer": f"{BASE_URL}/booking/step3?token={TOKEN}&widget_token={WIDGET_TOKEN}"},
+    )
+    r.raise_for_status()
+    try:
+        csrf = extract_csrf(r.text)
+        log.info(f"  step4 CSRF: {csrf[:12]}…")
+    except ValueError:
+        log.warning("  Could not refresh CSRF from step4 page — using previous token")
+
     if dry_run:
         log.info(
             f"DRY RUN — would POST step4 to confirm booking for "
@@ -289,6 +302,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         )
         return True
 
+    # ── 7. POST step4 → confirm booking ──────────────────────────────────────
     log.info("Confirming booking (step4)…")
     r = session.post(
         f"{BASE_URL}/booking/step4",
@@ -330,12 +344,18 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
 
     log.info(f"  Final URL after step4: {r.url}")
 
-    # Strip <script> blocks to avoid false positives from JS string literals
+    # Redirect back to step1 or step3 means the POST was rejected
+    final_url = r.url.lower()
+    if "step1" in final_url or "step3" in final_url:
+        visible = re.sub(r"<[^>]+>", " ", re.sub(r"<script[^>]*>.*?</script>", "", r.text, flags=re.DOTALL))
+        visible = re.sub(r"\s+", " ", visible).strip()
+        log.error(f"Booking rejected — redirected back to {r.url}")
+        log.error(f"  Page text: {visible[:400]}")
+        return False
+
+    # Strip <script> blocks before checking page content
     body_no_scripts = re.sub(r"<script[^>]*>.*?</script>", "", r.text, flags=re.DOTALL)
     content = body_no_scripts.lower()
-
-    # A real confirmation page will redirect away from step4
-    landed_on_confirmation = "step4" not in r.url.lower()
 
     success_phrases = [
         "booking confirmed", "booking has been confirmed",
@@ -343,19 +363,16 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         "you're booked", "youre booked",
     ]
     matched = next((p for p in success_phrases if p in content), None)
-
-    if matched or landed_on_confirmation:
-        idx = content.find(matched) if matched else 0
+    if matched:
+        idx = content.find(matched)
         snippet = body_no_scripts[max(0, idx - 80):idx + 200].replace("\n", " ").strip()
         log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
-        log.info(f"  Signal: url={r.url!r}, matched={matched!r}")
-        log.info(f"  Context: …{snippet}…")
+        log.info(f"  Matched {matched!r}: …{snippet}…")
         return True
 
-    # Strip all tags and log readable page text to help diagnose failures
     visible = re.sub(r"<[^>]+>", " ", body_no_scripts)
     visible = re.sub(r"\s+", " ", visible).strip()
-    log.warning(f"Booking did NOT appear to confirm (HTTP {r.status_code}, url={r.url})")
+    log.warning(f"Unclear result (HTTP {r.status_code}, url={r.url})")
     log.warning(f"  Page text: {visible[:600]}")
     return False
 
