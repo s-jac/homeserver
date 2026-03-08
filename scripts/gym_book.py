@@ -2,42 +2,65 @@
 """
 Manly Aquatic Centre - HIIT Class Auto-Booker
 
-Books the Tuesday or Thursday 7am HIIT class on nabooki.com.
-Reads credentials from config/settings.json under the "gym" key.
+Flow:
+  1. GET widget          → session cookies + CSRF token
+  2. POST step1          → select HIIT service
+  3. GET step2/step3     → navigate (maintains session state)
+  4. POST timeslots AJAX → get available slots for target date, find 7am slot ID
+  5. POST schedule AJAX  → select the 7am slot
+  6. POST step4          → confirm with personal details
 
-Cron schedule (set up via crontab -e):
-    30 0 * * SAT  → runs Saturday 00:30, books Tuesday  (3 days ahead)
-    30 0 * * MON  → runs Monday  00:30, books Thursday (3 days ahead)
+Cron schedule:
+  30 0 * * SAT  → Saturday 00:30, books Tuesday  (3 days ahead)
+  30 0 * * MON  → Monday  00:30, books Thursday (3 days ahead)
 
-Manual test run:
-    venv/bin/python scripts/gym_book.py --date 2026-03-10
+Manual run:
+  venv/bin/python scripts/gym_book.py --date 2026-03-10
 """
 
 import argparse
 import json
 import logging
+import re
 import sys
+from datetime import date as date_type
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytz
-from playwright.sync_api import TimeoutError as PlaywrightTimeout
-from playwright.sync_api import sync_playwright
+import requests
 
 BASE_DIR = Path(__file__).parent.parent
 SETTINGS_FILE = BASE_DIR / "config" / "settings.json"
 JOBS_FILE = BASE_DIR / "config" / "jobs.json"
-LOGS_DIR = BASE_DIR / "logs"
 
-WIDGET_URL = (
-    "https://app.nabooki.com/booking/popup/widget"
-    "?token=5fade28f6f4d07.93412102"
-)
-TARGET_TIME = "7:00 am"
-SYDNEY_TZ = pytz.timezone("Australia/Sydney")
+BASE_URL       = "https://app.nabooki.com"
+TOKEN          = "5fade28f6f4d07.93412102"
+WIDGET_TOKEN   = "aHR0cHM6Ly9hcHAubmFib29raS5jb20vYm9va2luZy9zdGVwMT90b2tlbj01ZmFkZTI4ZjZmNGQwNy45MzQxMjEwMg=="
+SERVICE_ID     = "221273"
+LOCATION_ID    = "42841"
+BUSINESS_ID    = "42400"
+RESOURCE_IDS   = ["63942", "64112", "66093", "66380", "66381", "66382"]
+TARGET_TIME    = "7:00"   # matched against timeslot time strings
 
-# weekday int → job id
+# All service IDs listed on the step1 form (for the number_of_people fields)
+ALL_SERVICE_IDS = ["220774", "221305", "220773", "221273",
+                   "220775", "221276", "258839", "220776", "221459", "221277"]
+
+SYDNEY_TZ  = pytz.timezone("Australia/Sydney")
 WEEKDAY_JOB = {1: "gym_tuesday_7am", 3: "gym_thursday_7am"}
+
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
+    "Accept": (
+        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+        "image/avif,image/webp,image/apng,*/*;q=0.8"
+    ),
+}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,7 +70,54 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def load_gym_creds():
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+def extract_csrf(html: str) -> str:
+    for pattern in [
+        r'<meta name="csrf-token" content="([^"]+)"',
+        r'<input[^>]+name="_token"[^>]+value="([^"]+)"',
+        r'<input[^>]+value="([^"]+)"[^>]+name="_token"',
+    ]:
+        m = re.search(pattern, html)
+        if m:
+            return m.group(1)
+    raise ValueError("Could not find CSRF token in page HTML")
+
+
+def find_slot_id(data, target_time: str) -> str | None:
+    """
+    Recursively search the timeslots AJAX response for a slot matching target_time.
+    Logs the full raw response on first call so we can verify the structure.
+    Returns the slot/schedule ID string, or None if not found.
+    """
+    if isinstance(data, list):
+        for item in data:
+            result = find_slot_id(item, target_time)
+            if result:
+                return result
+    elif isinstance(data, dict):
+        # Check if this dict represents a slot with a matching time
+        time_val = str(
+            data.get("time") or data.get("start_time") or
+            data.get("start") or data.get("from") or ""
+        )
+        if target_time in time_val:
+            slot_id = (
+                data.get("id") or data.get("schedule_id") or
+                data.get("slot_id") or data.get("schedule_or_finetune_id")
+            )
+            if slot_id:
+                return str(slot_id)
+        # Recurse into nested structures
+        for key in ("slots", "timeslots", "data", "results", "items", "schedule"):
+            if key in data:
+                result = find_slot_id(data[key], target_time)
+                if result:
+                    return result
+    return None
+
+
+def load_gym_creds() -> dict:
     with open(SETTINGS_FILE) as f:
         gym = json.load(f).get("gym", {})
     creds = {k: gym.get(k, "") for k in ("first_name", "last_name", "email", "mobile")}
@@ -57,8 +127,7 @@ def load_gym_creds():
     return creds
 
 
-def target_date():
-    """Return (date_str, job_id) for the class 3 days from now if Tue or Thu, else (None, None)."""
+def target_date() -> tuple[str | None, str | None]:
     today = datetime.now(SYDNEY_TZ).date()
     target = today + timedelta(days=3)
     job_id = WEEKDAY_JOB.get(target.weekday())
@@ -67,14 +136,14 @@ def target_date():
     return None, None
 
 
-def is_job_enabled(job_id):
+def is_job_enabled(job_id: str) -> bool:
     with open(JOBS_FILE) as f:
         data = json.load(f)
     job = next((j for j in data["jobs"] if j["id"] == job_id), None)
-    return job["enabled"] if job else False
+    return bool(job and job.get("enabled"))
 
 
-def update_job_status(job_id, status, message):
+def update_job_status(job_id: str, status: str, message: str):
     try:
         with open(JOBS_FILE) as f:
             data = json.load(f)
@@ -89,192 +158,187 @@ def update_job_status(job_id, status, message):
         log.warning(f"Could not update job status: {e}")
 
 
-def book(date_str, creds):
-    """Attempt to book the HIIT class on date_str. Returns True on success."""
-    target_day_num = str(int(date_str.split("-")[2]))
-    log.info(f"Starting booking for {date_str} at {TARGET_TIME}")
-    LOGS_DIR.mkdir(exist_ok=True)
+# ── Booking flow ──────────────────────────────────────────────────────────────
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent=(
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/144.0.0.0 Safari/537.36"
-            ),
+def book(date_str: str, creds: dict) -> bool:
+    session = requests.Session()
+    session.headers.update(BROWSER_HEADERS)
+    step_params = {"token": TOKEN, "widget_token": WIDGET_TOKEN}
+
+    # ── 1. GET widget → session cookies + CSRF ───────────────────────────────
+    log.info("Loading booking widget…")
+    r = session.get(f"{BASE_URL}/booking/popup/widget", params={"token": TOKEN})
+    r.raise_for_status()
+    csrf = extract_csrf(r.text)
+    log.info(f"  Session established, CSRF: {csrf[:12]}…")
+
+    # ── 2. POST step1 → select HIIT service ──────────────────────────────────
+    log.info("Selecting HIIT service (step1)…")
+    step1_data = [
+        ("_token",                csrf),
+        ("token",                 TOKEN),
+        ("widget_token",          WIDGET_TOKEN),
+        ("validated_promo_code",  ""),
+        ("service_ids",           f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}"),
+        ("is_schedule_service",   "yes"),
+        ("no_service_error",      ""),
+    ]
+    for sid in ALL_SERVICE_IDS:
+        prefix = f"location_{LOCATION_ID}_category_0_service_{sid}"
+        step1_data += [
+            (f"{prefix}-number_of_people_min",     "1"),
+            (f"{prefix}-number_of_people_max",     "1"),
+            (f"{prefix}-number_of_people_default", "1"),
+            (f"{prefix}-number_of_people",         "1"),
+        ]
+    step1_data.append(("next", ""))
+
+    r = session.post(
+        f"{BASE_URL}/booking/step1",
+        data=step1_data,
+        headers={"Referer": f"{BASE_URL}/booking/step1?token={TOKEN}"},
+    )
+    r.raise_for_status()
+    log.info(f"  step1 → {r.status_code}, landed on: {r.url}")
+
+    # ── 3. GET step2 and step3 → navigate, maintain session ──────────────────
+    for step in ("step2", "step3"):
+        log.info(f"Loading {step}…")
+        r = session.get(
+            f"{BASE_URL}/booking/{step}",
+            params=step_params,
+            headers={"Referer": f"{BASE_URL}/booking/step1?token={TOKEN}"},
         )
-        page = context.new_page()
-
-        # Track POST response statuses after the confirm step
-        post_responses = []
-
-        def on_response(response):
-            if response.request.method == "POST":
-                post_responses.append((response.url, response.status))
-                log.info(f"  POST {response.url} → {response.status}")
-
+        r.raise_for_status()
+        # Refresh CSRF if the page offers one
         try:
-            # ── Step 1: Load widget ──────────────────────────────────────
-            log.info("Loading booking widget…")
-            page.goto(WIDGET_URL, wait_until="networkidle")
+            csrf = extract_csrf(r.text)
+        except ValueError:
+            pass
 
-            # ── Step 2: Select HIIT ──────────────────────────────────────
-            log.info("Selecting HIIT class…")
-            hiit_clicked = False
-            for selector in [
-                "text=HIIT",
-                "button:has-text('HIIT')",
-                "li:has-text('HIIT')",
-                "[class*='service']:has-text('HIIT')",
-            ]:
-                try:
-                    page.click(selector, timeout=3000)
-                    hiit_clicked = True
-                    log.info(f"  Clicked HIIT via: {selector}")
-                    break
-                except PlaywrightTimeout:
-                    continue
+    ajax_headers = {
+        "X-Requested-With": "XMLHttpRequest",
+        "X-CSRF-TOKEN": csrf,
+        "Origin": BASE_URL,
+        "Referer": f"{BASE_URL}/booking/step3?token={TOKEN}&widget_token={WIDGET_TOKEN}",
+        "Accept": "*/*",
+    }
 
-            if not hiit_clicked:
-                log.error("Could not find HIIT button.")
-                return False
+    # ── 4. POST timeslots AJAX → get available slots for date ────────────────
+    log.info(f"Fetching timeslots for {date_str}…")
+    timeslot_payload = [
+        ("location_id",          LOCATION_ID),
+        ("service_id",           SERVICE_ID),
+        ("timezone",             "Australia/Sydney"),
+        ("number_of_people",     "1"),
+        ("modified_booking_id",  ""),
+        ("is_scheduled_service", "1"),
+        ("date",                 date_str),
+    ]
+    for rid in RESOURCE_IDS:
+        timeslot_payload.append(("resource_ids[]", rid))
 
-            page.wait_for_load_state("networkidle")
+    r = session.post(
+        f"{BASE_URL}/booking/scheduled_available_timeslots_ajax",
+        params=step_params,
+        data=timeslot_payload,
+        headers=ajax_headers,
+    )
+    r.raise_for_status()
 
-            # ── Step 3: Navigate to target date ─────────────────────────
-            # TODO: If the widget calendar doesn't default to the right week,
-            # add prev/next month navigation here. Inspect selectors on the
-            # live page if bookings land on the wrong date.
-            log.info(f"Selecting date {date_str} (day {target_day_num})…")
-            date_clicked = False
-            for selector in [
-                f"td[data-date='{date_str}']",
-                f"td:has-text('{target_day_num}')",
-                f"[class*='day']:has-text('{target_day_num}')",
-                f"button:has-text('{target_day_num}')",
-            ]:
-                try:
-                    page.click(selector, timeout=3000)
-                    date_clicked = True
-                    log.info(f"  Clicked date via: {selector}")
-                    break
-                except PlaywrightTimeout:
-                    continue
+    # Log raw response to help debug slot ID parsing if needed
+    log.info(f"  Timeslots response ({r.status_code}): {r.text[:500]}")
 
-            if not date_clicked:
-                log.warning("Could not click specific date — continuing, widget may auto-select.")
-
-            page.wait_for_load_state("networkidle")
-
-            # ── Step 4: Click 'Check Availability' ──────────────────────
-            log.info("Clicking Check Availability…")
-            for selector in [
-                "button:has-text('Check Availability')",
-                "input[value*='Check']",
-                "text=Check Availability",
-            ]:
-                try:
-                    page.click(selector, timeout=3000)
-                    break
-                except PlaywrightTimeout:
-                    continue
-
-            page.wait_for_load_state("networkidle")
-
-            # ── Step 5: Find and click the 7:00 am slot ─────────────────
-            log.info(f"Looking for {TARGET_TIME} slot…")
-            slot_found = False
-            try:
-                slot = page.locator(f"*:has-text('{TARGET_TIME}')").last
-                book_btn = slot.locator("button:has-text('Book'), a:has-text('Book')")
-                book_btn.click(timeout=5000)
-                slot_found = True
-                log.info("  Clicked time slot.")
-            except Exception:
-                try:
-                    page.click("button:has-text('Book Now')", timeout=5000)
-                    slot_found = True
-                    log.info("  Clicked first 'Book Now' button.")
-                except PlaywrightTimeout:
-                    pass
-
-            if not slot_found:
-                log.error("Could not find time slot — class may be full or booking not yet open.")
-                return False
-
-            page.wait_for_load_state("networkidle")
-
-            # ── Step 6: Fill in booking form ─────────────────────────────
-            # TODO: Verify field name attributes against the live page.
-            log.info("Filling booking form…")
-            try:
-                page.fill("input[name='first_name']", creds["first_name"], timeout=5000)
-                page.fill("input[name='last_name']",  creds["last_name"])
-                page.fill("input[name='email']",      creds["email"])
-                page.fill("input[name='mobile']",     creds["mobile"])
-            except PlaywrightTimeout:
-                log.error("Could not fill form fields — selectors may need updating.")
-                return False
-
-            # ── Step 7: Confirm — start tracking responses now ───────────
-            log.info("Submitting booking…")
-            page.on("response", on_response)
-            for selector in [
-                "input[name='confirm']",
-                "button[name='confirm']",
-                "button:has-text('Confirm')",
-                "input[type='submit']",
-            ]:
-                try:
-                    page.click(selector, timeout=3000)
-                    break
-                except PlaywrightTimeout:
-                    continue
-
-            page.wait_for_load_state("networkidle")
-
-            # ── Step 8: Verify success ───────────────────────────────────
-            # Check 1: any POST came back with a non-success status?
-            failed_posts = [(url, s) for url, s in post_responses if s >= 400]
-            if failed_posts:
-                log.error(f"Booking POST returned error status(es): {failed_posts}")
-                return False
-
-            # Check 2: page content confirms booking
-            content = page.content().lower()
-            success_phrases = ["confirmed", "success", "thank you", "booking reference", "you're booked", "youre booked"]
-            if any(phrase in content for phrase in success_phrases):
-                log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
-                return True
-
-            # Neither a clear success nor a clear HTTP error — log what we see
-            snippet = page.inner_text("body")[:400].replace("\n", " ").strip()
-            log.warning(f"Unclear result. Page text: {snippet}")
+    try:
+        timeslots = r.json()
+    except ValueError:
+        # Response might be HTML — check for "no availability" indicators
+        if any(p in r.text.lower() for p in ["no availability", "no slots", "fully booked"]):
+            log.error("No availability for this date.")
             return False
+        log.error(f"Unexpected non-JSON timeslots response: {r.text[:300]}")
+        return False
 
-        except Exception as e:
-            log.error(f"Unexpected error: {e}")
-            return False
+    slot_id = find_slot_id(timeslots, TARGET_TIME)
+    if not slot_id:
+        log.error(
+            f"Could not find {TARGET_TIME} slot. "
+            f"Full timeslots response: {json.dumps(timeslots)}"
+        )
+        return False
+    log.info(f"  Found slot ID: {slot_id}")
 
-        finally:
-            context.close()
-            browser.close()
+    # ── 5. POST schedule AJAX → select the timeslot ──────────────────────────
+    log.info("Selecting timeslot…")
+    r = session.post(
+        f"{BASE_URL}/booking/availability/ajax/schedule",
+        params=step_params,
+        data={
+            "date":                             date_str,
+            "staffs_selected":                  "",
+            "resources_selected":               "",
+            "schedule_or_finetune_selected":    "schedule",
+            "schedule_or_finetune_id_selected": slot_id,
+            "service_id":                       SERVICE_ID,
+        },
+        headers=ajax_headers,
+    )
+    r.raise_for_status()
+    log.info(f"  Schedule select → {r.status_code}")
 
+    # ── 6. POST step4 → confirm booking ──────────────────────────────────────
+    log.info("Confirming booking (step4)…")
+    r = session.post(
+        f"{BASE_URL}/booking/step4",
+        data={
+            "_token":                   csrf,
+            "token":                    TOKEN,
+            "business_id":              BUSINESS_ID,
+            "widget_token":             WIDGET_TOKEN,
+            "validated_promo_code":     "",
+            "service_ids":              f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}",
+            "number_of_people_selected": "1",
+            "require_customer_payment": "",
+            "first_name":               creds["first_name"],
+            "last_name":                creds["last_name"],
+            "email":                    creds["email"],
+            "mobile":                   creds["mobile"],
+            "mobile_country":           "AU",
+            "booking_comments":         "",
+            "booking_confirmation_by":  "email",
+            "confirm":                  "",
+        },
+        headers={
+            "Referer": f"{BASE_URL}/booking/step4?token={TOKEN}&widget_token={WIDGET_TOKEN}",
+        },
+    )
+
+    if r.status_code >= 400:
+        log.error(f"step4 returned HTTP {r.status_code}")
+        return False
+
+    content = r.text.lower()
+    success_phrases = [
+        "confirmed", "success", "thank you", "booking reference",
+        "you're booked", "youre booked", "booking has been",
+    ]
+    if any(p in content for p in success_phrases):
+        log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
+        return True
+
+    snippet = r.text[:500].replace("\n", " ").strip()
+    log.warning(f"Unclear result (HTTP {r.status_code}). Response: {snippet}")
+    return False
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Book a gym HIIT class")
-    parser.add_argument(
-        "--date",
-        help="Override date to book (YYYY-MM-DD). Skips the enabled check.",
-        default=None,
-    )
+    parser.add_argument("--date", help="Override date to book (YYYY-MM-DD). Skips the enabled check.")
     args = parser.parse_args()
 
     if args.date:
-        # Manual run — resolve job from the date's weekday
-        from datetime import date as date_type
         d = date_type.fromisoformat(args.date)
         job_id = WEEKDAY_JOB.get(d.weekday())
         if not job_id:
@@ -285,7 +349,7 @@ def main():
     else:
         date_str, job_id = target_date()
         if not date_str:
-            log.info("Not a booking day (no Tue/Thu class 3 days from now). Exiting.")
+            log.info("Not a booking day. Exiting.")
             sys.exit(0)
         if not is_job_enabled(job_id):
             log.info(f"Job {job_id} is disabled. Skipping.")
