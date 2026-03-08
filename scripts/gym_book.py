@@ -275,8 +275,65 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
     r.raise_for_status()
     log.info(f"  Schedule select → {r.status_code}, body: {r.text[:300]}")
 
-    # ── 6. Skip GET step4 — it redirects to step1 and clears session state ───
-    # The real browser POSTs step4 directly from JS after the schedule AJAX.
+    # ── 6. POST step3 → commit booking state to session ─────────────────────
+    # This is the "Next" button submit on the time selection page.
+    # It stores date/slot/service in the session, enabling step4 to load.
+    log.info("Submitting step3 (committing slot to session)…")
+    r = session.post(
+        f"{BASE_URL}/booking/step3",
+        data={
+            "_token":                           csrf,
+            "token":                            TOKEN,
+            "widget_token":                     WIDGET_TOKEN,
+            "validated_promo_code":             "",
+            "original_service_id":              SERVICE_ID,
+            "should_be_added_to_waitlist":      "false",
+            "multiple_sessions":                "no",
+            "max_number_of_sessions":           "1",
+            "max_number_of_sessions_orig":      "1",
+            "booked_number_of_sessions":        "0",
+            "count_number_of_sessions":         "0",
+            "max_sessions_number_of_people":    "99999",
+            "staff_name_invisible":             "true",
+            "resource_invisible":               "true",
+            "availability_only":                "no",
+            "is_booking_request":               "no",
+            "service_ids":                      f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}",
+            "timeslot_selected":                TARGET_TIME,
+            "schedule_or_finetune_id_selected": slot_id,
+            "schedule_or_finetune_selected":    "schedule",
+            "time_end_selected":                "",
+            "staffs_selected":                  "",
+            "resources_selected":               resource_id,
+            "staffs_resources_selected":        "",
+            "number_of_people_selected":        "1",
+            "number_of_people_label":           "Number of people",
+            "number_of_people_label_plural":    "people",
+            "number_of_people_label_single":    "person",
+            "service_max_number_of_people":     "1",
+            "widget_datepicker_input":          date_str,
+            "next":                             "",
+        },
+        headers={"Referer": f"{BASE_URL}/booking/step3?token={TOKEN}&widget_token={WIDGET_TOKEN}"},
+    )
+    r.raise_for_status()
+    log.info(f"  step3 POST → {r.status_code}, landed on: {r.url}")
+
+    # ── 7. GET step4 → load the customer details form ────────────────────────
+    log.info("Loading step4 form…")
+    r = session.get(
+        f"{BASE_URL}/booking/step4",
+        params={"token": TOKEN, "widget_token": WIDGET_TOKEN},
+        headers={"Referer": f"{BASE_URL}/booking/step3?token={TOKEN}&widget_token={WIDGET_TOKEN}"},
+    )
+    r.raise_for_status()
+    log.info(f"  step4 GET landed on: {r.url}")
+    try:
+        csrf = extract_csrf(r.text)
+        log.info(f"  step4 CSRF: {csrf[:12]}…")
+    except ValueError:
+        log.warning("  Could not refresh CSRF from step4 page")
+
     if dry_run:
         log.info(
             f"DRY RUN — would POST step4 to confirm booking for "
