@@ -471,7 +471,8 @@ def main():
     )
     update_job_status(job_id, "success" if success else "error", msg)
     if not success and (args.fail or (not args.fake and not args.dry_run)):
-        send_notification(f"Gym booking FAILED — {date_str} {TARGET_TIME}", msg)
+        day_name = "Thurs" if job_id == "gym_thursday_7am" else "Tues"
+        send_notification(f"Gym booking FAILED — {day_name} {date_str} {TARGET_TIME}", msg)
     sys.exit(0 if success else 1)
 
 
