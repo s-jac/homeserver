@@ -30,6 +30,9 @@ from pathlib import Path
 import pytz
 import requests
 
+sys.path.insert(0, str(Path(__file__).parent))
+from notify import send_notification
+
 BASE_DIR = Path(__file__).parent.parent
 SETTINGS_FILE = BASE_DIR / "config" / "settings.json"
 JOBS_FILE = BASE_DIR / "config" / "jobs.json"
@@ -462,6 +465,8 @@ def main():
         else f"Failed to book {date_str} at {TARGET_TIME}"
     )
     update_job_status(job_id, "success" if success else "error", msg)
+    if not success and not args.fake and not args.dry_run:
+        send_notification(f"Gym booking FAILED — {date_str} {TARGET_TIME}", msg)
     sys.exit(0 if success else 1)
 
 
