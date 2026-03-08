@@ -30,13 +30,12 @@
     .badge-none { background: #e5e5ea; color: #8e8e93; }
     .run-btn { background: #007aff; color: white; border: none; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
     .run-btn:disabled { background: #b0c8f0; cursor: not-allowed; }
-    input[type=text], input[type=password], input[type=email] {
+    input[type=password] {
       width: 100%; padding: 10px 12px; border: 1px solid #d1d1d6; border-radius: 10px;
       font-size: 15px; margin-bottom: 10px; background: #fafafa;
     }
     .btn { width: 100%; padding: 13px; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 4px; }
     .btn-primary { background: #007aff; color: white; }
-    .btn-secondary { background: #e5e5ea; color: #1c1c1e; }
     #login-screen { max-width: 340px; margin: 80px auto; padding: 0 20px; }
     #login-screen h1 { font-size: 26px; font-weight: 700; margin-bottom: 8px; text-align: center; }
     #login-screen p { color: #8e8e93; text-align: center; margin-bottom: 28px; font-size: 15px; }
@@ -70,38 +69,6 @@
       </div>
     </section>
 
-    <section>
-      <h2>Email Notifications</h2>
-      <div class="card">
-        <div class="card-row">
-          <div>
-            <div class="label">Enable email alerts</div>
-            <div class="sub">Gmail SMTP</div>
-          </div>
-          <label class="toggle">
-            <input type="checkbox" id="email-enabled-toggle" onchange="saveEmailEnabled()">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="card-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-          <input type="email" id="email-address" placeholder="Gmail address" autocomplete="email">
-          <input type="password" id="email-app-password" placeholder="App password (leave blank to keep)" autocomplete="off">
-          <button class="btn btn-secondary" onclick="saveEmailSettings()">Save email settings</button>
-          <div id="email-save-msg" class="info-text"></div>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <h2>Security</h2>
-      <div class="card">
-        <div class="card-row" style="flex-direction:column; align-items:stretch; gap:8px;">
-          <input type="password" id="new-password" placeholder="New password" autocomplete="new-password">
-          <button class="btn btn-secondary" onclick="changePassword()">Change password</button>
-          <div id="pw-save-msg" class="info-text"></div>
-        </div>
-      </div>
-    </section>
   </main>
 </div>
 
@@ -156,7 +123,6 @@
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app-screen').classList.remove('hidden');
     loadJobs();
-    loadSettings();
   }
 
   async function loadJobs() {
@@ -205,38 +171,6 @@
     btn.disabled = false;
     btn.textContent = 'Run';
     if (res) loadJobs();
-  }
-
-  async function loadSettings() {
-    const data = await api('GET', '/api/settings');
-    if (!data) return;
-    document.getElementById('email-enabled-toggle').checked = data.email.enabled;
-    document.getElementById('email-address').value = data.email.from_address || '';
-  }
-
-  async function saveEmailEnabled() {
-    const enabled = document.getElementById('email-enabled-toggle').checked;
-    await api('PATCH', '/api/settings', { email: { enabled } });
-  }
-
-  async function saveEmailSettings() {
-    const address = document.getElementById('email-address').value.trim();
-    const appPw = document.getElementById('email-app-password').value;
-    const payload = { email: { from_address: address, to_address: address, username: address } };
-    if (appPw) payload.email.app_password = appPw;
-    await api('PATCH', '/api/settings', payload);
-    document.getElementById('email-app-password').value = '';
-    document.getElementById('email-save-msg').textContent = 'Saved.';
-    setTimeout(() => document.getElementById('email-save-msg').textContent = '', 2000);
-  }
-
-  async function changePassword() {
-    const pw = document.getElementById('new-password').value;
-    if (!pw) return;
-    await api('PATCH', '/api/settings', { password: pw });
-    document.getElementById('new-password').value = '';
-    document.getElementById('pw-save-msg').textContent = 'Password updated. You will need to sign in again.';
-    setTimeout(() => { logout(); }, 2000);
   }
 
   // Auto-load if token exists
