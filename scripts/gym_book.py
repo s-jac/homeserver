@@ -323,8 +323,13 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         "confirmed", "success", "thank you", "booking reference",
         "you're booked", "youre booked", "booking has been",
     ]
-    if any(p in content for p in success_phrases):
+    matched = next((p for p in success_phrases if p in content), None)
+    if matched:
+        # Log a snippet around the matched phrase so we can verify it's genuine
+        idx = content.find(matched)
+        snippet = r.text[max(0, idx - 80):idx + 200].replace("\n", " ").strip()
         log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
+        log.info(f"  Matched '{matched}' in response: …{snippet}…")
         return True
 
     snippet = r.text[:500].replace("\n", " ").strip()
