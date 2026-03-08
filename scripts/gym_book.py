@@ -274,7 +274,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
     r.raise_for_status()
     log.info(f"  Schedule select → {r.status_code}")
 
-    # ── 6. GET step4 → fresh CSRF for the confirmation form ─────────────────
+    # ── 6. GET step4 → read all hidden form fields ───────────────────────────
     log.info("Loading step4 form…")
     r = session.get(
         f"{BASE_URL}/booking/step4",
@@ -282,8 +282,19 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         headers={"Referer": f"{BASE_URL}/booking/step3?token={TOKEN}&widget_token={WIDGET_TOKEN}"},
     )
     r.raise_for_status()
+
+    # Extract every hidden input from the step4 form — these carry booking state
+    hidden_fields = dict(re.findall(
+        r'<input[^>]+type=["\']hidden["\'][^>]+name=["\']([^"\']+)["\'][^>]+value=["\']([^"\']*)["\']',
+        r.text
+    ) + re.findall(
+        r'<input[^>]+name=["\']([^"\']+)["\'][^>]+type=["\']hidden["\'][^>]+value=["\']([^"\']*)["\']',
+        r.text
+    ))
+    log.info(f"  step4 hidden fields: {list(hidden_fields.keys())}")
+
     try:
-        csrf = extract_csrf(r.text)
+        csrf = hidden_fields.get("_token") or extract_csrf(r.text)
         log.info(f"  step4 CSRF: {csrf[:12]}…")
     except ValueError:
         log.warning("  Could not refresh CSRF from step4 page — using previous token")
@@ -298,26 +309,30 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
 
     # ── 7. POST step4 → confirm booking ──────────────────────────────────────
     log.info("Confirming booking (step4)…")
+    # Start with all hidden fields from the form (carries server-side booking state),
+    # then overlay with our personal details and known fixed fields
+    step4_data = {**hidden_fields}
+    step4_data.update({
+        "_token":                    csrf,
+        "token":                     TOKEN,
+        "business_id":               BUSINESS_ID,
+        "widget_token":              WIDGET_TOKEN,
+        "validated_promo_code":      "",
+        "service_ids":               f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}",
+        "number_of_people_selected": "1",
+        "require_customer_payment":  "",
+        "first_name":                creds["first_name"],
+        "last_name":                 creds["last_name"],
+        "email":                     creds["email"],
+        "mobile":                    creds["mobile"],
+        "mobile_country":            "AU",
+        "booking_comments":          "",
+        "booking_confirmation_by":   "email",
+        "confirm":                   "",
+    })
     r = session.post(
         f"{BASE_URL}/booking/step4",
-        data={
-            "_token":                   csrf,
-            "token":                    TOKEN,
-            "business_id":              BUSINESS_ID,
-            "widget_token":             WIDGET_TOKEN,
-            "validated_promo_code":     "",
-            "service_ids":              f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}",
-            "number_of_people_selected": "1",
-            "require_customer_payment": "",
-            "first_name":               creds["first_name"],
-            "last_name":                creds["last_name"],
-            "email":                    creds["email"],
-            "mobile":                   creds["mobile"],
-            "mobile_country":           "AU",
-            "booking_comments":         "",
-            "booking_confirmation_by":  "email",
-            "confirm":                  "",
-        },
+        data=step4_data,
         headers={
             "Referer": f"{BASE_URL}/booking/step4?token={TOKEN}&widget_token={WIDGET_TOKEN}",
         },
