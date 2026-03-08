@@ -8,8 +8,12 @@ Reads credentials from config/settings.json under the "gym" key.
 Cron schedule (set up via crontab -e):
     30 0 * * SAT  → runs Saturday 00:30, books Tuesday  (3 days ahead)
     30 0 * * MON  → runs Monday  00:30, books Thursday (3 days ahead)
+
+Manual test run:
+    venv/bin/python scripts/gym_book.py --date 2026-03-10
 """
 
+import argparse
 import json
 import logging
 import sys
@@ -19,9 +23,6 @@ from pathlib import Path
 import pytz
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
-
-sys.path.insert(0, str(Path(__file__).parent))
-from notify import send_notification
 
 BASE_DIR = Path(__file__).parent.parent
 SETTINGS_FILE = BASE_DIR / "config" / "settings.json"
@@ -35,7 +36,7 @@ WIDGET_URL = (
 TARGET_TIME = "7:00 am"
 SYDNEY_TZ = pytz.timezone("Australia/Sydney")
 
-# Maps weekday int → job id (for updating UI status)
+# weekday int → job id
 WEEKDAY_JOB = {1: "gym_tuesday_7am", 3: "gym_thursday_7am"}
 
 logging.basicConfig(
@@ -46,19 +47,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def load_settings():
-    with open(SETTINGS_FILE) as f:
-        return json.load(f)
-
-
 def load_gym_creds():
-    gym = load_settings().get("gym", {})
-    creds = {
-        "first_name": gym.get("first_name", ""),
-        "last_name":  gym.get("last_name", ""),
-        "email":      gym.get("email", ""),
-        "mobile":     gym.get("mobile", ""),
-    }
+    with open(SETTINGS_FILE) as f:
+        gym = json.load(f).get("gym", {})
+    creds = {k: gym.get(k, "") for k in ("first_name", "last_name", "email", "mobile")}
     missing = [k for k, v in creds.items() if not v]
     if missing:
         raise ValueError(f"Missing gym credentials in settings.json: {missing}")
@@ -66,10 +58,7 @@ def load_gym_creds():
 
 
 def target_date():
-    """
-    Return (date_str, job_id) for the class 3 days from now if it's a Tue or Thu.
-    Returns (None, None) if today is not a booking day.
-    """
+    """Return (date_str, job_id) for the class 3 days from now if Tue or Thu, else (None, None)."""
     today = datetime.now(SYDNEY_TZ).date()
     target = today + timedelta(days=3)
     job_id = WEEKDAY_JOB.get(target.weekday())
@@ -101,13 +90,8 @@ def update_job_status(job_id, status, message):
 
 
 def book(date_str, creds):
-    """
-    Attempt to book the HIIT class on date_str. Returns True on success.
-    date_str format: YYYY-MM-DD
-    """
-    # Format as the page likely displays it, e.g. "15" for the 15th
+    """Attempt to book the HIIT class on date_str. Returns True on success."""
     target_day_num = str(int(date_str.split("-")[2]))
-
     log.info(f"Starting booking for {date_str} at {TARGET_TIME}")
     LOGS_DIR.mkdir(exist_ok=True)
 
@@ -123,13 +107,13 @@ def book(date_str, creds):
         )
         page = context.new_page()
 
-        def screenshot(name):
-            path = str(LOGS_DIR / f"{name}_{date_str}.png")
-            try:
-                page.screenshot(path=path)
-                log.info(f"Screenshot saved: {path}")
-            except Exception:
-                pass
+        # Track POST response statuses after the confirm step
+        post_responses = []
+
+        def on_response(response):
+            if response.request.method == "POST":
+                post_responses.append((response.url, response.status))
+                log.info(f"  POST {response.url} → {response.status}")
 
         try:
             # ── Step 1: Load widget ──────────────────────────────────────
@@ -155,18 +139,14 @@ def book(date_str, creds):
 
             if not hiit_clicked:
                 log.error("Could not find HIIT button.")
-                screenshot("debug_hiit")
                 return False
 
             page.wait_for_load_state("networkidle")
 
-            # ── Step 3: Navigate to the target date in the calendar ──────
-            # TODO: The nabooki calendar may need date navigation (prev/next
-            # month arrows) to reach the right week. Inspect the live page
-            # to confirm the calendar's selector structure and add clicks
-            # here if the widget doesn't default to showing 3 days ahead.
-            #
-            # Basic attempt — look for the day number and click it:
+            # ── Step 3: Navigate to target date ─────────────────────────
+            # TODO: If the widget calendar doesn't default to the right week,
+            # add prev/next month navigation here. Inspect selectors on the
+            # live page if bookings land on the wrong date.
             log.info(f"Selecting date {date_str} (day {target_day_num})…")
             date_clicked = False
             for selector in [
@@ -184,10 +164,7 @@ def book(date_str, creds):
                     continue
 
             if not date_clicked:
-                log.warning(
-                    "Could not click specific date — page may auto-show correct week. Continuing…"
-                )
-                screenshot("debug_date")
+                log.warning("Could not click specific date — continuing, widget may auto-select.")
 
             page.wait_for_load_state("networkidle")
 
@@ -206,7 +183,7 @@ def book(date_str, creds):
 
             page.wait_for_load_state("networkidle")
 
-            # ── Step 5: Find and click the 7:00 am time slot ────────────
+            # ── Step 5: Find and click the 7:00 am slot ─────────────────
             log.info(f"Looking for {TARGET_TIME} slot…")
             slot_found = False
             try:
@@ -225,13 +202,12 @@ def book(date_str, creds):
 
             if not slot_found:
                 log.error("Could not find time slot — class may be full or booking not yet open.")
-                screenshot("debug_slot")
                 return False
 
             page.wait_for_load_state("networkidle")
 
             # ── Step 6: Fill in booking form ─────────────────────────────
-            # TODO: Verify these field name attributes against the live page.
+            # TODO: Verify field name attributes against the live page.
             log.info("Filling booking form…")
             try:
                 page.fill("input[name='first_name']", creds["first_name"], timeout=5000)
@@ -240,11 +216,11 @@ def book(date_str, creds):
                 page.fill("input[name='mobile']",     creds["mobile"])
             except PlaywrightTimeout:
                 log.error("Could not fill form fields — selectors may need updating.")
-                screenshot("debug_form")
                 return False
 
-            # ── Step 7: Confirm ──────────────────────────────────────────
+            # ── Step 7: Confirm — start tracking responses now ───────────
             log.info("Submitting booking…")
+            page.on("response", on_response)
             for selector in [
                 "input[name='confirm']",
                 "button[name='confirm']",
@@ -260,19 +236,26 @@ def book(date_str, creds):
             page.wait_for_load_state("networkidle")
 
             # ── Step 8: Verify success ───────────────────────────────────
-            content = page.content().lower()
-            if any(w in content for w in ["confirmed", "success", "thank you", "booking reference"]):
-                log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
-                screenshot("confirmed")
-                return True
-            else:
-                log.warning("Could not confirm success from page content.")
-                screenshot("uncertain")
+            # Check 1: any POST came back with a non-success status?
+            failed_posts = [(url, s) for url, s in post_responses if s >= 400]
+            if failed_posts:
+                log.error(f"Booking POST returned error status(es): {failed_posts}")
                 return False
+
+            # Check 2: page content confirms booking
+            content = page.content().lower()
+            success_phrases = ["confirmed", "success", "thank you", "booking reference", "you're booked", "youre booked"]
+            if any(phrase in content for phrase in success_phrases):
+                log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
+                return True
+
+            # Neither a clear success nor a clear HTTP error — log what we see
+            snippet = page.inner_text("body")[:400].replace("\n", " ").strip()
+            log.warning(f"Unclear result. Page text: {snippet}")
+            return False
 
         except Exception as e:
             log.error(f"Unexpected error: {e}")
-            screenshot("debug_error")
             return False
 
         finally:
@@ -281,15 +264,32 @@ def book(date_str, creds):
 
 
 def main():
-    date_str, job_id = target_date()
+    parser = argparse.ArgumentParser(description="Book a gym HIIT class")
+    parser.add_argument(
+        "--date",
+        help="Override date to book (YYYY-MM-DD). Skips the enabled check.",
+        default=None,
+    )
+    args = parser.parse_args()
 
-    if not date_str:
-        log.info("Not a booking day (no class 3 days from now). Exiting.")
-        sys.exit(0)
-
-    if not is_job_enabled(job_id):
-        log.info(f"Job {job_id} is disabled. Skipping.")
-        sys.exit(0)
+    if args.date:
+        # Manual run — resolve job from the date's weekday
+        from datetime import date as date_type
+        d = date_type.fromisoformat(args.date)
+        job_id = WEEKDAY_JOB.get(d.weekday())
+        if not job_id:
+            log.error(f"{args.date} is not a Tuesday or Thursday.")
+            sys.exit(1)
+        date_str = args.date
+        log.info(f"Manual run: booking {date_str} (job: {job_id})")
+    else:
+        date_str, job_id = target_date()
+        if not date_str:
+            log.info("Not a booking day (no Tue/Thu class 3 days from now). Exiting.")
+            sys.exit(0)
+        if not is_job_enabled(job_id):
+            log.info(f"Job {job_id} is disabled. Skipping.")
+            sys.exit(0)
 
     try:
         creds = load_gym_creds()
@@ -297,7 +297,6 @@ def main():
         msg = str(e)
         log.error(msg)
         update_job_status(job_id, "error", msg)
-        send_notification("Gym booking ERROR", msg)
         sys.exit(1)
 
     success = book(date_str, creds)
@@ -307,10 +306,6 @@ def main():
         else f"Failed to book {date_str} at {TARGET_TIME}"
     )
     update_job_status(job_id, "success" if success else "error", msg)
-    send_notification(
-        f"Gym booking {'SUCCESS' if success else 'FAILED'}",
-        msg
-    )
     sys.exit(0 if success else 1)
 
 

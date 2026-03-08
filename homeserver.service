@@ -1,0 +1,17 @@
+[Unit]
+Description=HomeServer Flask App
+After=network.target
+
+[Service]
+Type=simple
+User=gmac
+Group=gmac
+WorkingDirectory=/home/gmac/homeserver
+ExecStart=/home/gmac/homeserver/venv/bin/gunicorn -c gunicorn.conf.py app:app
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
