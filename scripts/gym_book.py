@@ -195,20 +195,14 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
     r.raise_for_status()
     log.info(f"  step1 → {r.status_code}, landed on: {r.url}")
 
-    # ── 3. GET step2 and step3 → navigate, maintain session ──────────────────
-    for step in ("step2", "step3"):
-        log.info(f"Loading {step}…")
-        r = session.get(
-            f"{BASE_URL}/booking/{step}",
-            params=step_params,
-            headers={"Referer": f"{BASE_URL}/booking/step1?token={TOKEN}"},
-        )
-        r.raise_for_status()
-        # Refresh CSRF if the page offers one
-        try:
-            csrf = extract_csrf(r.text)
-        except ValueError:
-            pass
+    # ── 3. Extract CSRF from step3 page (step1 already redirected us there) ──
+    # Do NOT go back to step2 — that resets server session state.
+    # step1 redirect already landed on step3; use its CSRF.
+    try:
+        csrf = extract_csrf(r.text)
+        log.info(f"  step3 CSRF: {csrf[:12]}…")
+    except ValueError:
+        log.warning("  Could not extract CSRF from step3 page, using widget CSRF")
 
     ajax_headers = {
         "X-Requested-With": "XMLHttpRequest",
