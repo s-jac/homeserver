@@ -314,6 +314,12 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         },
     )
 
+    # Save the full step4 response for manual verification
+    response_log = LOGS_DIR / f"booking_response_{date_str}.html"
+    LOGS_DIR.mkdir(exist_ok=True)
+    response_log.write_text(r.text)
+    log.info(f"  Step4 response saved to {response_log}")
+
     if r.status_code >= 400:
         log.error(f"step4 returned HTTP {r.status_code}")
         return False
