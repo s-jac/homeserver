@@ -427,6 +427,7 @@ def main():
     parser.add_argument("--date", help="Override date to book (YYYY-MM-DD). Skips the enabled check.")
     parser.add_argument("--dry-run", action="store_true", help="Go through all steps but skip the final confirmation POST.")
     parser.add_argument("--fake", action="store_true", help="Use fake test credentials (real email so you can cancel).")
+    parser.add_argument("--fail", action="store_true", help="Simulate a booking failure to test email notification.")
     args = parser.parse_args()
 
     if args.date:
@@ -458,14 +459,18 @@ def main():
             update_job_status(job_id, "error", msg)
             sys.exit(1)
 
-    success = book(date_str, creds, dry_run=args.dry_run)
+    if args.fail:
+        log.info("--fail flag set, simulating booking failure for notification test.")
+        success = False
+    else:
+        success = book(date_str, creds, dry_run=args.dry_run)
     msg = (
         f"Booked {date_str} at {TARGET_TIME}"
         if success
         else f"Failed to book {date_str} at {TARGET_TIME}"
     )
     update_job_status(job_id, "success" if success else "error", msg)
-    if not success and not args.fake and not args.dry_run:
+    if not success and (args.fail or (not args.fake and not args.dry_run)):
         send_notification(f"Gym booking FAILED — {date_str} {TARGET_TIME}", msg)
     sys.exit(0 if success else 1)
 
