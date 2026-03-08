@@ -33,6 +33,7 @@ import requests
 BASE_DIR = Path(__file__).parent.parent
 SETTINGS_FILE = BASE_DIR / "config" / "settings.json"
 JOBS_FILE = BASE_DIR / "config" / "jobs.json"
+LOGS_DIR = BASE_DIR / "logs"
 
 BASE_URL       = "https://app.nabooki.com"
 TOKEN          = "5fade28f6f4d07.93412102"
@@ -314,32 +315,48 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         },
     )
 
-    # Save the full step4 response for manual verification
-    response_log = LOGS_DIR / f"booking_response_{date_str}.html"
+    # Save the full step4 response for manual verification, keep last 10 only
     LOGS_DIR.mkdir(exist_ok=True)
+    response_log = LOGS_DIR / f"booking_response_{date_str}.html"
     response_log.write_text(r.text)
     log.info(f"  Step4 response saved to {response_log}")
+    old_responses = sorted(LOGS_DIR.glob("booking_response_*.html"))[:-10]
+    for f in old_responses:
+        f.unlink()
 
     if r.status_code >= 400:
         log.error(f"step4 returned HTTP {r.status_code}")
         return False
 
-    content = r.text.lower()
+    log.info(f"  Final URL after step4: {r.url}")
+
+    # Strip <script> blocks to avoid false positives from JS string literals
+    body_no_scripts = re.sub(r"<script[^>]*>.*?</script>", "", r.text, flags=re.DOTALL)
+    content = body_no_scripts.lower()
+
+    # A real confirmation page will redirect away from step4
+    landed_on_confirmation = "step4" not in r.url.lower()
+
     success_phrases = [
-        "confirmed", "success", "thank you", "booking reference",
-        "you're booked", "youre booked", "booking has been",
+        "booking confirmed", "booking has been confirmed",
+        "thank you for your booking", "booking reference",
+        "you're booked", "youre booked",
     ]
     matched = next((p for p in success_phrases if p in content), None)
-    if matched:
-        # Log a snippet around the matched phrase so we can verify it's genuine
-        idx = content.find(matched)
-        snippet = r.text[max(0, idx - 80):idx + 200].replace("\n", " ").strip()
+
+    if matched or landed_on_confirmation:
+        idx = content.find(matched) if matched else 0
+        snippet = body_no_scripts[max(0, idx - 80):idx + 200].replace("\n", " ").strip()
         log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
-        log.info(f"  Matched '{matched}' in response: …{snippet}…")
+        log.info(f"  Signal: url={r.url!r}, matched={matched!r}")
+        log.info(f"  Context: …{snippet}…")
         return True
 
-    snippet = r.text[:500].replace("\n", " ").strip()
-    log.warning(f"Unclear result (HTTP {r.status_code}). Response: {snippet}")
+    # Strip all tags and log readable page text to help diagnose failures
+    visible = re.sub(r"<[^>]+>", " ", body_no_scripts)
+    visible = re.sub(r"\s+", " ", visible).strip()
+    log.warning(f"Booking did NOT appear to confirm (HTTP {r.status_code}, url={r.url})")
+    log.warning(f"  Page text: {visible[:600]}")
     return False
 
 
