@@ -85,11 +85,11 @@ def extract_csrf(html: str) -> str:
     raise ValueError("Could not find CSRF token in page HTML")
 
 
-def find_slot_id(data, target_time: str) -> str | None:
+def find_slot_id(data, target_time: str) -> tuple[str | None, str | None]:
     """
     Parse the nabooki timeslots AJAX response.
     Response shape: {"data": [{"07:00": {"id_staff_resource": "schedule-443559--64112"}}, ...]}
-    The time is the dict key; the schedule ID is extracted from id_staff_resource.
+    Returns (schedule_id, resource_id) for the matching time slot.
     """
     slots_list = data.get("data", []) if isinstance(data, dict) else data
     for slot_dict in slots_list:
@@ -98,11 +98,11 @@ def find_slot_id(data, target_time: str) -> str | None:
         for time_key, slot_info in slot_dict.items():
             if target_time in time_key:
                 id_staff = slot_info.get("id_staff_resource", "")
-                # Format: "schedule-443559--64112" → extract the schedule ID
-                m = re.search(r"schedule-(\d+)", id_staff)
+                # Format: "schedule-443559--64112"
+                m = re.match(r"schedule-(\d+)--(\d+)", id_staff)
                 if m:
-                    return m.group(1)
-    return None
+                    return m.group(1), m.group(2)
+    return None, None
 
 
 def load_gym_creds() -> dict:
@@ -247,14 +247,14 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         log.error(f"Unexpected non-JSON timeslots response: {r.text[:300]}")
         return False
 
-    slot_id = find_slot_id(timeslots, TARGET_TIME)
+    slot_id, resource_id = find_slot_id(timeslots, TARGET_TIME)
     if not slot_id:
         log.error(
             f"Could not find {TARGET_TIME} slot. "
             f"Full timeslots response: {json.dumps(timeslots)}"
         )
         return False
-    log.info(f"  Found slot ID: {slot_id}")
+    log.info(f"  Found slot ID: {slot_id}, resource ID: {resource_id}")
 
     # ── 5. POST schedule AJAX → select the timeslot ──────────────────────────
     log.info("Selecting timeslot…")
@@ -264,10 +264,11 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         data={
             "date":                             date_str,
             "staffs_selected":                  "",
-            "resources_selected":               "",
+            "resources_selected":               resource_id,
             "schedule_or_finetune_selected":    "schedule",
             "schedule_or_finetune_id_selected": slot_id,
             "service_id":                       SERVICE_ID,
+            "number_of_people":                 "1",
         },
         headers=ajax_headers,
     )
