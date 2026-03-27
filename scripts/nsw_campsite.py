@@ -33,18 +33,13 @@ from pathlib import Path
 
 import requests
 
-BASE_DIR    = Path(__file__).parent.parent
-CONFIG_FILE = BASE_DIR / "config" / "config.json"
+sys.path.insert(0, str(Path(__file__).parent.parent / "config"))
+import config as cfg
 
 
 def _load_campsite_cfg(real: bool) -> dict:
-    """Load campsite section from config.json. real=True uses 'campsite', else 'campsite_fake'."""
-    with open(CONFIG_FILE) as f:
-        data = json.load(f)
-    key = "campsite" if real else "campsite_fake"
-    if key not in data:
-        sys.exit(f"'{key}' section not found in config.json")
-    return data[key]
+    """Load campsite identity from config.py. real=True uses sam, else gordon."""
+    return cfg.sam if real else cfg.gordon
 
 # ── Campground registry ────────────────────────────────────────────────────────
 #
@@ -1025,7 +1020,7 @@ Examples:
                     help="Run the full booking flow up to payment initiation, "
                          "then stop without charging the card")
     bk.add_argument("--real", action="store_true",
-                    help="Use 'campsite' section in config.json (real card details); default is 'campsite_fake'")
+                    help="Use sam identity from config.py (real card details); default is gordon (test identity)")
 
     return p
 

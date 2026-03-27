@@ -31,10 +31,11 @@ import pytz
 import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "config"))
 from notify import send_notification
+import config as cfg
 
 BASE_DIR      = Path(__file__).parent.parent
-CONFIG_FILE   = BASE_DIR / "config" / "config.json"
 JOBS_FILE     = BASE_DIR / "config" / "jobs.json"
 LOGS_DIR      = BASE_DIR / "logs"
 
@@ -108,13 +109,12 @@ def find_slot_id(data, target_time: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def load_gym_creds() -> dict:
-    with open(CONFIG_FILE) as f:
-        gym = json.load(f).get("gym", {})
-    creds = {k: gym.get(k, "") for k in ("first_name", "last_name", "email", "mobile")}
+def load_gym_creds(real: bool) -> dict:
+    identity = cfg.sam if real else cfg.gordon
+    creds = {k: identity.get(k, "") for k in ("first_name", "last_name", "email", "mobile")}
     missing = [k for k, v in creds.items() if not v]
     if missing:
-        raise ValueError(f"Missing gym credentials in config.json: {missing}")
+        raise ValueError(f"Missing gym credentials in config.py ({('sam' if real else 'gordon')}): {missing}")
     return creds
 
 
@@ -426,7 +426,7 @@ def main():
     parser = argparse.ArgumentParser(description="Book a gym HIIT class")
     parser.add_argument("--date", help="Override date to book (YYYY-MM-DD). Skips the enabled check.")
     parser.add_argument("--dry-run", action="store_true", help="Go through all steps but skip the final confirmation POST.")
-    parser.add_argument("--fake", action="store_true", help="Use fake test credentials (real email so you can cancel).")
+    parser.add_argument("--real", action="store_true", help="Use real (sam) credentials. Default is gordon (test identity).")
     parser.add_argument("--fail", action="store_true", help="Simulate a booking failure to test email notification.")
     args = parser.parse_args()
 
@@ -447,17 +447,14 @@ def main():
             log.info(f"Job {job_id} is disabled. Skipping.")
             sys.exit(0)
 
-    if args.fake:
-        creds = {"first_name": "Gordon", "last_name": "Macdonald", "email": "gordonmaccas@proton.me", "mobile": "0417826417"}
-        log.info("  Using fake test credentials")
-    else:
-        try:
-            creds = load_gym_creds()
-        except ValueError as e:
-            msg = str(e)
-            log.error(msg)
-            update_job_status(job_id, "error", msg)
-            sys.exit(1)
+    try:
+        creds = load_gym_creds(real=args.real)
+    except ValueError as e:
+        msg = str(e)
+        log.error(msg)
+        update_job_status(job_id, "error", msg)
+        sys.exit(1)
+    log.info(f"  Using {'sam (real)' if args.real else 'gordon (test)'} identity")
 
     if args.fail:
         log.info("--fail flag set, simulating booking failure for notification test.")
@@ -470,7 +467,7 @@ def main():
         else f"Failed to book {date_str} at {TARGET_TIME}"
     )
     update_job_status(job_id, "success" if success else "error", msg)
-    if not success and (args.fail or (not args.fake and not args.dry_run)):
+    if not success and (args.fail or (args.real and not args.dry_run)):
         day_name = "Thurs" if job_id == "gym_thursday_7am" else "Tues"
         send_notification(f"Gym booking FAILED — {day_name} {date_str} {TARGET_TIME}", msg)
     sys.exit(0 if success else 1)
