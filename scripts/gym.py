@@ -15,7 +15,11 @@ Cron schedule:
   30 0 * * MON  → Monday  00:30, books Thursday (3 days ahead)
 
 Manual run:
-  ~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-03-10
+  # Dry run with gordon (test identity) — skips final booking POST
+  python scripts/gym.py --date 2026-04-01 --dry-run
+
+  # Real run with sam credentials
+  python scripts/gym.py --date 2026-04-01 --real
 """
 
 import argparse

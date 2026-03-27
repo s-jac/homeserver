@@ -4,13 +4,11 @@ NSW National Parks Campsite Booking Script
 
 Two-step workflow:
 
-  1. Check availability — see what's free, find adjacent groups:
-       python nsw_campsite.py check --campground frazer --checkin 2026-09-04 --nights 2
-       python nsw_campsite.py check --campground frazer --checkin 2026-09-04 --nights 2 --count 3
-       python nsw_campsite.py check --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4
+  1. Check availability:
+       python scripts/nsw_campsite.py check --campground coorongooba --checkin 2026-09-04 --nights 2
 
-  2. Book specific sites:
-       python nsw_campsite.py book  --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1
+  2. Book (--dry-run stops before charging; --real uses sam credentials and charges the card):
+       python scripts/nsw_campsite.py book --campground spring-gully --checkin 2026-09-04 --nights 2 --sites 2,3 --adults 1 --real
 
 API architecture:
   - Discovery:  GET  nationalparks.nsw.gov.au/npws/ReservationApi/...
@@ -51,7 +49,7 @@ def _load_campsite_cfg(real: bool) -> dict:
 #                 leave sites as [] and unit_id "0" will be used.
 #
 # To discover unit_ids for a new campground, run:
-#   python book.py check --campground <key> --checkin <date> --nights 1 --dump-ids
+#   python scripts/nsw_campsite.py check --campground <key> --checkin <date> --nights 1 --dump-ids
 
 CAMPGROUNDS = {
     "frazer": {
@@ -939,15 +937,11 @@ def discover_campground(slug: str) -> dict:
 
 
 def resolve_campground(key: str) -> dict:
-    """
-    Resolve a campground by short key (from the CAMPGROUNDS registry) or by
-    nationalparks.nsw.gov.au URL slug (e.g. 'spring-gully-campground').
-    """
     cg = CAMPGROUNDS.get(key)
     if cg is not None:
         return cg
-    # Fall back to dynamic discovery via the NP website
-    return discover_campground(key)
+    slug = key if key.endswith("-campground") else key + "-campground"
+    return discover_campground(slug)
 
 
 def add_nights(checkin: str, nights: int) -> str:
@@ -963,32 +957,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # See what's free at Frazer for 2 nights from Sep 4:
-  python book.py check --campground frazer --checkin 2026-09-04 --nights 2
-
-  # Find 3 adjacent available sites at Frazer:
-  python book.py check --campground frazer --checkin 2026-09-04 --nights 2 --count 3
-
-  # Check if specific sites are available:
-  python book.py check --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4
-
-  # Check any campground by URL slug — no prior setup needed:
-  python book.py check --campground spring-gully-campground --checkin 2026-10-10 --nights 3
-
-  # Book 3 sites at Frazer, 2 adults each, for a long weekend:
-  python book.py book  --campground frazer --checkin 2026-09-04 --nights 3 --sites 2,3,4 --adults 2
-
-  # Book a camp-anywhere site (no --sites needed):
-  python book.py book  --campground policemans-point --checkin 2026-10-01 --nights 1 --adults 1
-
-  # Dry run — full flow up to payment initiation, no card charged:
-  python book.py book  --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --dry-run
-
-  # Dry run with fake config (default) — safe to run any time:
-  python book.py book  --campground spring-gully-campground --checkin 2026-10-10 --nights 2 --adults 2 --dry-run
-
-  # Use real config (--real flag) — actually charges the card:
-  python book.py book  --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --real
+  python scripts/nsw_campsite.py check --campground coorongooba --checkin 2026-09-04 --nights 2
+  python scripts/nsw_campsite.py book  --campground spring-gully --checkin 2026-09-04 --nights 2 --sites 2,3 --adults 1 --real
 """,
     )
     sub = p.add_subparsers(dest="command", required=True)
@@ -999,6 +969,8 @@ Examples:
     shared.add_argument("--checkin",  required=True, metavar="YYYY-MM-DD")
     shared.add_argument("--nights",   type=int, required=True)
     shared.add_argument("--adults",   type=int, default=1, help="Adults per site (default: 1)")
+    shared.add_argument("--real", action="store_true",
+                        help="Use sam identity from config.py (real card details); default is gordon (test identity)")
     shared.add_argument("--jsessionid", default=None,
                         help="JSESSIONID cookie from browser (until login is automated)")
     shared.add_argument("--phpsessid",  default=None,
@@ -1019,9 +991,6 @@ Examples:
     bk.add_argument("--dry-run", action="store_true",
                     help="Run the full booking flow up to payment initiation, "
                          "then stop without charging the card")
-    bk.add_argument("--real", action="store_true",
-                    help="Use sam identity from config.py (real card details); default is gordon (test identity)")
-
     return p
 
 
