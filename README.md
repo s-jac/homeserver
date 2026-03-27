@@ -13,47 +13,91 @@ A personal automation server running on a Raspberry Pi. Accessible privately via
 ## Directory structure
 
 ```
-app.py               Flask app — auth, jobs API, settings API
-gunicorn.conf.py     Gunicorn config (workers, log paths, bind address)
-homeserver.service   Systemd unit file (also installed at /etc/systemd/system/)
-requirements.txt     Python dependencies
+app.py                     Flask app — auth, jobs API, settings API
+gunicorn.conf.py           Gunicorn config (workers, log paths, bind address)
+homeserver.service         Systemd unit file (also installed at /etc/systemd/system/)
+requirements.txt           Python dependencies
 config/
-  settings.example.json   Template — copy to ~/config/homeserver/settings.json
-templates/           Frontend HTML
-logs/                Access and error logs (logrotated)
+  config.json              Runtime config — gitignored, populate from config.sample.json
+  config.sample.json       Template with all keys and descriptions
+  jobs.json                Job definitions and last-run state — gitignored
+scripts/
+  gym.py                   HIIT class auto-booker (Manly Aquatic Centre)
+  nsw_campsite.py          NSW National Parks campsite booking
+  notify.py                Gmail SMTP notification helper
+templates/
+  index.html               Mobile-friendly SPA frontend
+logs/                      Access, error, and job logs (logrotated, gitignored)
 ```
 
-Config and job state live outside this repo at `~/config/homeserver/` — see below.
+## Setup on a new machine
 
-## Runtime config (outside repo)
+See [homeserver-setup](https://github.com/s-jac/homeserver-setup) — `install.sh` handles everything in one command. After running it:
 
-| File | Contents |
-|------|----------|
-| `~/config/homeserver/settings.json` | Auth password, JWT secret, gym credentials, email config |
-| `~/config/homeserver/jobs.json` | Job definitions and last-run state |
+```bash
+cp ~/homeserver/config/config.sample.json ~/homeserver/config/config.json
+chmod 600 ~/homeserver/config/config.json
+# Fill in config.json with real credentials
+```
 
-Both files are `chmod 600`. See `config/settings.example.json` for the expected shape.
+## Config
 
-The shared Python environment is at `~/venv/`.
+All config lives in `config/config.json` (gitignored). Top-level sections:
 
-## Fresh install
-
-See the [homeserver-setup](https://github.com/s-jac/homeserver-setup) repo — `install.sh` handles cloning, venv creation, systemd, logrotate, and crontab in one command.
+| Section | Used by |
+|---------|---------|
+| `auth` | app.py — login password, JWT secret |
+| `email` | notify.py — Gmail SMTP for failure alerts |
+| `gym` | gym.py — personal details for HIIT booking |
+| `campsite` | nsw_campsite.py — rezexpert login, personal, vehicle, card (real) |
+| `campsite_fake` | nsw_campsite.py — dummy credentials for dry-run testing |
 
 ## Jobs
 
-Jobs are defined in `~/config/homeserver/jobs.json`. Each job has:
+Jobs are defined in `config/jobs.json` (gitignored — it holds live state). Each entry has:
 
-- `script` — absolute path to the Python script to run
-- `cron` — schedule (display only; actual cron entry lives in the user crontab)
+- `script` — path to the script (relative to homeserver root, or absolute)
+- `cron` — schedule shown in the UI (actual cron entry is in the user crontab)
 - `enabled` — toggled from the UI; scripts check this flag and exit early if false
-- `params` — arbitrary key/value data (informational, passed as context)
 
-The UI at `http://<tailscale-ip>:5000` shows each job's last run time, status, and output, and lets you enable/disable or manually trigger a run.
+The UI at `http://<tailscale-ip>:5000` shows last run time, status, and output per job, and lets you enable/disable or manually trigger runs.
+
+## Scripts
+
+### gym.py
+
+Auto-books 7am HIIT classes at Manly Aquatic Centre (nabooki.com). Runs Saturday 00:30 to book Tuesday, and Monday 00:30 to book Thursday (booking window opens 3 days in advance). Reads credentials from `config.json["gym"]`. Sends an email via notify.py on failure.
+
+```bash
+# Manual run for a specific date
+~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01
+
+# Dry run — all steps but no final confirmation POST
+~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run
+
+# Fake credentials (no real booking)
+~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --fake
+```
+
+### nsw_campsite.py
+
+Check availability and book NSW National Parks campsites via the rezexpert API and Westpac payment gateway. Run manually, not via cron.
+
+```bash
+# Check availability (uses campsite_fake credentials by default)
+~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py check --campground frazer --checkin 2026-09-04 --nights 2
+
+# Book — dry run stops before charging the card
+~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --dry-run
+
+# Book for real (uses config.json["campsite"], charges the card)
+~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --real
+```
 
 ## Adding a new job
 
-1. Create the script in its own repo (e.g. `~/my-script/`)
-2. Add an entry to `~/config/homeserver/jobs.json`
-3. Add a cron line (`crontab -e`) pointing at `~/venv/bin/python ~/my-script/script.py`
-4. Update `~/setup/install.sh` to clone the new repo and register the cron entry
+1. Add a script to `scripts/`
+2. Add an entry to `config/jobs.json`
+3. Add a cron line (`crontab -e`) pointing at `~/venv/bin/python ~/homeserver/scripts/yourscript.py`
+4. Update `~/setup/install.sh` with the cron entry
+5. Add any new config keys to `config/config.sample.json`

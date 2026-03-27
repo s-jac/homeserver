@@ -8,16 +8,15 @@ from pathlib import Path
 import jwt
 from flask import Flask, request, jsonify, render_template, abort
 
-BASE_DIR = Path(__file__).parent
-CONFIG_DIR = Path("~/config/homeserver").expanduser()
-SETTINGS_FILE = CONFIG_DIR / "settings.json"
-JOBS_FILE = CONFIG_DIR / "jobs.json"
+BASE_DIR     = Path(__file__).parent
+CONFIG_FILE  = BASE_DIR / "config" / "config.json"
+JOBS_FILE    = BASE_DIR / "config" / "jobs.json"
 
 app = Flask(__name__)
 
 
-def load_settings():
-    with open(SETTINGS_FILE) as f:
+def load_config():
+    with open(CONFIG_FILE) as f:
         return json.load(f)
 
 
@@ -38,9 +37,9 @@ def require_auth(f):
         if not auth_header.startswith("Bearer "):
             abort(401)
         token = auth_header[7:]
-        settings = load_settings()
+        config = load_config()
         try:
-            jwt.decode(token, settings["auth"]["jwt_secret"], algorithms=["HS256"])
+            jwt.decode(token, config["auth"]["jwt_secret"], algorithms=["HS256"])
         except jwt.InvalidTokenError:
             abort(401)
         return f(*args, **kwargs)
@@ -52,13 +51,13 @@ def require_auth(f):
 @app.route("/api/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
-    settings = load_settings()
-    if data.get("password") != settings["auth"]["password"]:
+    config = load_config()
+    if data.get("password") != config["auth"]["password"]:
         return jsonify({"error": "Invalid password"}), 401
-    expiry = datetime.now(timezone.utc) + timedelta(hours=settings["auth"]["token_expiry_hours"])
+    expiry = datetime.now(timezone.utc) + timedelta(hours=config["auth"]["token_expiry_hours"])
     token = jwt.encode(
         {"exp": expiry},
-        settings["auth"]["jwt_secret"],
+        config["auth"]["jwt_secret"],
         algorithm="HS256"
     )
     return jsonify({"token": token})
@@ -100,7 +99,7 @@ def run_job(job_id):
         script = BASE_DIR / script
     if not script.exists():
         return jsonify({"error": "Script not found"}), 500
-    venv_python = Path("~/venv/bin/python").expanduser()
+    venv_python = BASE_DIR.parent / "venv" / "bin" / "python"
     try:
         result = subprocess.run(
             [str(venv_python), str(script)],
@@ -123,12 +122,12 @@ def run_job(job_id):
 @app.route("/api/settings", methods=["GET"])
 @require_auth
 def get_settings():
-    settings = load_settings()
+    config = load_config()
     # Don't expose secrets
     safe = {
-        "email": {k: v for k, v in settings["email"].items() if k != "app_password"},
+        "email": {k: v for k, v in config["email"].items() if k != "app_password"},
     }
-    safe["email"]["app_password_set"] = bool(settings["email"].get("app_password", "").strip("x "))
+    safe["email"]["app_password_set"] = bool(config["email"].get("app_password", "").strip("x "))
     return jsonify(safe)
 
 
@@ -136,15 +135,15 @@ def get_settings():
 @require_auth
 def update_settings():
     data = request.get_json(silent=True) or {}
-    settings = load_settings()
+    config = load_config()
     if "email" in data:
         for key in ("enabled", "from_address", "to_address", "username", "app_password"):
             if key in data["email"]:
-                settings["email"][key] = data["email"][key]
+                config["email"][key] = data["email"][key]
     if "password" in data and data["password"]:
-        settings["auth"]["password"] = data["password"]
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(settings, f, indent=2)
+        config["auth"]["password"] = data["password"]
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
     return jsonify({"ok": True})
 
 

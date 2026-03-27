@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 logs/
-config/settings.json
+config/config.json
+config/jobs.json
 gunicorn.ctl
 *.log

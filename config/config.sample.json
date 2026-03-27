@@ -1,0 +1,58 @@
+{
+  "auth": {
+    "password": "changeme",
+    "jwt_secret": "replace-with-64-char-hex-string",
+    "token_expiry_hours": 168
+  },
+  "email": {
+    "enabled": false,
+    "from_address": "you@gmail.com",
+    "to_address": "you@gmail.com",
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "username": "you@gmail.com",
+    "app_password": ""
+  },
+  "gym": {
+    "first_name": "",
+    "last_name": "",
+    "email": "",
+    "mobile": ""
+  },
+  "campsite": {
+    "email": "",
+    "password": "",
+    "first_name": "",
+    "last_name": "",
+    "phone": "",
+    "address": "",
+    "city": "",
+    "state": "NSW",
+    "postcode": "",
+    "vehicle_rego": "",
+    "vehicle_state": "NSW",
+    "card_number": "",
+    "card_expiry_month": "",
+    "card_expiry_year": "",
+    "card_cvv": "",
+    "card_name": ""
+  },
+  "campsite_fake": {
+    "email": "test@example.com",
+    "password": "testpassword",
+    "first_name": "Test",
+    "last_name": "User",
+    "phone": "0400000000",
+    "address": "1 Test St",
+    "city": "Sydney",
+    "state": "NSW",
+    "postcode": "2000",
+    "vehicle_rego": "TEST00",
+    "vehicle_state": "NSW",
+    "card_number": "4111111111111111",
+    "card_expiry_month": "01",
+    "card_expiry_year": "2029",
+    "card_cvv": "123",
+    "card_name": "Test User"
+  }
+}
