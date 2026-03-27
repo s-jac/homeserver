@@ -12,7 +12,7 @@ A Raspberry Pi (hostname: `jim`, user: `gmac`) running a Flask web app that mana
 
 ## After making changes
 
-Run `bash ~/setup/update.sh` to pull, commit, and push all repos at once. Only commit individually if you need a specific commit message for a significant change.
+Run `bash ~/homeserver/update.sh` to pull, commit, and push all repos at once. Only commit individually if you need a specific commit message for a significant change.
 
 ---
 
@@ -129,7 +129,7 @@ Cron uses `$HOME` expansion. The schedule is also stored in `jobs.json` for disp
 
 ## Logrotate
 
-Config source of truth: `~/setup/logrotate/homeserver` (installed to `/etc/logrotate.d/homeserver`). Covers `~/homeserver/logs/*.log`. Weekly, 8 weeks, compressed.
+Config source of truth: `~/homeserver/logrotate.conf` (installed to `/etc/logrotate.d/homeserver`). Covers `~/homeserver/logs/*.log`. Weekly, 8 weeks, compressed.
 
 ---
 
