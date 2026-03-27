@@ -16,7 +16,6 @@ sudo apt-get install -y python3-venv git logrotate
 # ── Clone repos ────────────────────────────────────────────────────────────────
 REPOS=(
     "git@github.com:s-jac/homeserver.git:$HOME/homeserver"
-    "git@github.com:s-jac/nsw-campsite-booking.git:$HOME/nsw-campsite-booking"
 )
 
 for entry in "${REPOS[@]}"; do

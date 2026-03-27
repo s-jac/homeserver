@@ -12,7 +12,7 @@ A Raspberry Pi (hostname: `jim`, user: `gmac`) running a Flask web app that mana
 
 ## After making changes
 
-Run `bash ~/homeserver/update.sh` to pull, commit, and push all repos at once. Only commit individually if you need a specific commit message for a significant change.
+Run `bash ~/homeserver/update.sh` to pull, commit, and push. Only commit individually if you need a specific commit message for a significant change.
 
 ---
 

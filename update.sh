@@ -10,7 +10,6 @@ warn()    { echo -e "${YELLOW}[update]${NC} $*"; }
 
 REPOS=(
     "$HOME/homeserver"
-    "$HOME/nsw-campsite-booking"
 )
 
 TIMESTAMP="$(date '+%Y-%m-%d %H:%M')"
