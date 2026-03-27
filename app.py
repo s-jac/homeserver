@@ -9,8 +9,9 @@ import jwt
 from flask import Flask, request, jsonify, render_template, abort
 
 BASE_DIR = Path(__file__).parent
-SETTINGS_FILE = BASE_DIR / "config" / "settings.json"
-JOBS_FILE = BASE_DIR / "config" / "jobs.json"
+CONFIG_DIR = Path("~/config/homeserver").expanduser()
+SETTINGS_FILE = CONFIG_DIR / "settings.json"
+JOBS_FILE = CONFIG_DIR / "jobs.json"
 
 app = Flask(__name__)
 
@@ -94,12 +95,15 @@ def run_job(job_id):
     job = next((j for j in jobs_data["jobs"] if j["id"] == job_id), None)
     if not job:
         return jsonify({"error": "Job not found"}), 404
-    script = BASE_DIR / job["script"]
+    script = Path(job["script"])
+    if not script.is_absolute():
+        script = BASE_DIR / script
     if not script.exists():
         return jsonify({"error": "Script not found"}), 500
+    venv_python = Path("~/venv/bin/python").expanduser()
     try:
         result = subprocess.run(
-            [str(BASE_DIR / "venv" / "bin" / "python"), str(script)],
+            [str(venv_python), str(script)],
             capture_output=True, text=True, timeout=60
         )
         status = "success" if result.returncode == 0 else "error"
