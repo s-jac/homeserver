@@ -4,10 +4,10 @@ NSW National Parks Campsite Booking Script
 
 Two-step workflow:
 
-  1. Check availability:
-       python scripts/nsw_campsite.py check --campground coorongooba --checkin 2026-09-04 --nights 2
+  1. Check availability — no login required, returns available check-in dates over a range:
+       python scripts/nsw_campsite.py check --campground coorongooba --from 2026-06-01 --to 2026-09-30
 
-  2. Book (--dry-run stops before charging; --real uses sam credentials and charges the card):
+  2. Book specific sites (--dry-run stops before charging; --real uses sam credentials):
        python scripts/nsw_campsite.py book --campground spring-gully --checkin 2026-09-04 --nights 2 --sites 2,3 --adults 1 --real
 
 API architecture:
@@ -22,8 +22,8 @@ import base64
 import re
 import sys
 import time
-from itertools import combinations
 from urllib.parse import quote, urlparse, parse_qs
+import urllib.request
 import xml.etree.ElementTree as ET
 
 import json
@@ -80,6 +80,11 @@ REZEXPERT_BASE = "https://nsw.rezexpert.com"
 
 NP_BASE            = "https://www.nationalparks.nsw.gov.au"
 NP_CAMPGROUND_BASE = f"{NP_BASE}/camping-and-accommodation/campgrounds"
+
+BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+)
 
 QUICKSTREAM_API        = "https://api.quickstream.westpac.com.au/rest/v1"
 QUICKSTREAM_PUBLIC_KEY = "SERVICENSW_PUB_rqczvau95ziei28ysby2kvmkpeurb6rmxxcfatxswwgg767z3xbseetq7u"
@@ -639,76 +644,151 @@ class PaymentClient:
         return self._poll_status(payment_reference)
 
 
-# ── Adjacency helpers ──────────────────────────────────────────────────────────
+# ── Availability check (public NP API, no login required) ─────────────────────
 
-def adjacent_groups(sites: list[dict], avail: dict[str, bool], count: int) -> list[list[dict]]:
-    """Return all runs of `count` consecutively adjacent available sites."""
-    available_indices = [i for i, s in enumerate(sites) if avail.get(s["unit_id"])]
-    groups = []
-    for i in range(len(available_indices) - count + 1):
-        window = available_indices[i:i + count]
-        if window == list(range(window[0], window[0] + count)):
-            groups.append([sites[j] for j in window])
-    return groups
-
-
-def non_adjacent_combos(sites: list[dict], avail: dict[str, bool], count: int) -> list[list[dict]]:
-    available = [s for s in sites if avail.get(s["unit_id"])]
-    return [list(c) for c in combinations(available, count)]
+def name_to_slug(name: str) -> str:
+    slug = name.lower().strip()
+    slug = re.sub(r"\([^)]*\)", "", slug)
+    slug = re.sub(r"[^a-z0-9 \-]", "", slug)
+    slug = re.sub(r"[\s\-]+", "-", slug).strip("-")
+    if not slug.endswith("-campground"):
+        slug += "-campground"
+    return slug
 
 
-# ── Display ────────────────────────────────────────────────────────────────────
+def fetch_campground_page(url: str) -> tuple[str, str, str, str]:
+    session = requests.Session()
+    session.headers["User-Agent"] = BROWSER_UA
+    resp = session.get(url)
+    if resp.status_code == 404:
+        sys.exit(f"Campground page not found: {url}\nCheck the slug, e.g. 'spring-gully-campground'")
+    resp.raise_for_status()
+    html = resp.text
 
-def show_availability(cg: dict, avail: dict[str, bool], count: int | None, specific: list[str] | None):
-    sites = cg["sites"]
+    m = re.search(r'data-context-item-id="(\{[^"]+\})"', html)
+    if not m:
+        sys.exit(f"Could not find availability widget on {url} — is this a campground page?")
+    context_id = m.group(1)
 
-    if not sites:
-        print("  (Camp-anywhere campground — no individual site selection)")
-        total_avail = sum(1 for v in avail.values() if v)
-        print(f"  {total_avail} spot(s) available.")
+    m2 = re.search(r'<input[^>]+name="__RequestVerificationToken"[^>]+value="([^"]+)"', html) or \
+         re.search(r'<input[^>]+value="([^"]+)"[^>]+name="__RequestVerificationToken"', html)
+    form_token = m2.group(1) if m2 else ""
+
+    m3 = re.search(r"<title>([^<]+)</title>", html)
+    title = m3.group(1).strip() if m3 else url
+
+    cookie_header = "; ".join(f"{k}={v}" for k, v in session.cookies.items())
+    return title, context_id, form_token, cookie_header
+
+
+def fetch_available_dates(context_id: str, form_token: str, cookie_header: str, adults: int = 1) -> set:
+    from datetime import date
+    qs = (
+        f"contextItemId={context_id}"
+        f"&adults={adults}&children=0&infants=0"
+        f"&formToken={quote(form_token, safe='')}"
+    )
+    url = f"{NP_BASE}/npws/ReservationApi/AvailabilityDates?{qs}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": BROWSER_UA, "Referer": NP_BASE, "Cookie": cookie_header},
+    )
+    with urllib.request.urlopen(req) as resp:
+        data = json.loads(resp.read().decode())
+    if data.get("Error"):
+        sys.exit(f"API error: {data['Error']}")
+    available = set()
+    for d_str in data.get("Dates", []):
+        day, month, year = d_str.split("/")
+        available.add(date(int(year), int(month), int(day)))
+    return available
+
+
+def weekends_in_range(from_date, to_date) -> list:
+    from datetime import timedelta
+    offset = (4 - from_date.weekday()) % 7
+    friday = from_date + timedelta(days=offset)
+    result = []
+    while friday <= to_date:
+        result.append((friday, friday + timedelta(days=3)))
+        friday += timedelta(days=7)
+    return result
+
+
+def show_weekends(available: set, from_date, to_date) -> None:
+    from datetime import timedelta
+    blocks = weekends_in_range(from_date, to_date)
+    if not blocks:
+        print("No weekends in range.")
         return
-
-    print(f"\n{'Site':<8} {'Status':<12} Unit ID")
-    print("─" * 32)
-    for s in sites:
-        status = "✓ available" if avail.get(s["unit_id"]) else "✗ taken"
-        marker = " ◀" if specific and s["label"] in specific else ""
-        print(f"  {s['label']:<6} {status:<12} {s['unit_id']}{marker}")
-    print()
-
-    available_count = sum(1 for s in sites if avail.get(s["unit_id"]))
-    print(f"{available_count} of {len(sites)} site(s) available.")
-
-    if specific:
-        print()
-        requested = [s for s in sites if s["label"] in specific]
-        taken = [s["label"] for s in requested if not avail.get(s["unit_id"])]
-        if not taken:
-            print(f"✓ Requested sites [{', '.join(specific)}] are all available.")
+    print(f"Weekend blocks (Fri–Mon, 3 nights) — {len(blocks)} total\n")
+    print(f"  {'Check-in → Check-out':<26}  Fri  Sat  Sun  Status")
+    print("  " + "─" * 55)
+    full_count = 0
+    for friday, monday in blocks:
+        sat = friday + timedelta(days=1)
+        sun = friday + timedelta(days=2)
+        f_ok, sa_ok, su_ok = friday in available, sat in available, sun in available
+        all_ok = f_ok and sa_ok and su_ok
+        if all_ok:
+            status = "✓ available"
+            full_count += 1
+        elif f_ok or sa_ok or su_ok:
+            status = "~ partial"
         else:
-            print(f"✗ Site(s) {', '.join(taken)} from your request are not available.")
-
-    if count:
-        print(f"\nGroups of {count} adjacent available sites:")
-        groups = adjacent_groups(sites, avail, count)
-        if groups:
-            for g in groups:
-                labels = ", ".join(s["label"] for s in g)
-                ids    = ", ".join(s["unit_id"] for s in g)
-                print(f"  Sites [{labels}]  (unit_ids: {ids})")
-        else:
-            print("  None found.")
-            avail_count = sum(1 for s in sites if avail.get(s["unit_id"]))
-            if avail_count >= count:
-                print(f"\nNon-adjacent combinations of {count} available sites:")
-                for combo in non_adjacent_combos(sites, avail, count):
-                    labels = ", ".join(s["label"] for s in combo)
-                    ids    = ", ".join(s["unit_id"] for s in combo)
-                    print(f"  Sites [{labels}]  (unit_ids: {ids})")
+            status = "✗ taken"
+        marks = "  ".join("✓" if ok else "✗" for ok in (f_ok, sa_ok, su_ok))
+        print(f"  {friday} → {monday}    {marks}   {status}")
     print()
+    print(f"{full_count} of {len(blocks)} weekend(s) fully available.")
+
+
+def show_dates(available: set, from_date, to_date) -> None:
+    from datetime import timedelta
+    in_range = sorted(d for d in available if from_date <= d <= to_date)
+    print(f"{len(in_range)} available check-in date(s) in range:\n")
+    if not in_range:
+        print("  None.")
+        return
+    runs: list[list] = []
+    for d in in_range:
+        if runs and (d - runs[-1][-1]).days == 1:
+            runs[-1].append(d)
+        else:
+            runs.append([d])
+    for run in runs:
+        if len(run) == 1:
+            print(f"  {run[0]}  ({run[0].strftime('%a')})")
+        else:
+            print(f"  {run[0]} – {run[-1]}  ({len(run)} consecutive days, "
+                  f"{run[0].strftime('%a')}–{run[-1].strftime('%a')})")
 
 
 # ── Commands ───────────────────────────────────────────────────────────────────
+
+def cmd_check(args):
+    from datetime import date
+    from_date = date.fromisoformat(args.from_date)
+    to_date   = date.fromisoformat(args.to_date)
+    if to_date < from_date:
+        sys.exit("--to must be on or after --from")
+
+    slug = name_to_slug(args.campground)
+    url  = f"{NP_CAMPGROUND_BASE}/{slug}"
+    print(f"Fetching  : {url}")
+    title, context_id, form_token, cookie_header = fetch_campground_page(url)
+    print(f"Campground: {title}")
+    print(f"Range     : {from_date} → {to_date}")
+    print()
+
+    available = fetch_available_dates(context_id, form_token, cookie_header, args.adults)
+
+    if args.weekends:
+        show_weekends(available, from_date, to_date)
+    else:
+        show_dates(available, from_date, to_date)
+    print()
+
 
 def _login(client: RezExpertClient, business_code: str, args, cfg=None) -> dict:
     """
@@ -722,37 +802,6 @@ def _login(client: RezExpertClient, business_code: str, args, cfg=None) -> dict:
     if email and password and not args.jsessionid:
         return client.login(business_code, email=email, password=password)
     return client.login(business_code)
-
-
-def cmd_check(args):
-    cg = resolve_campground(args.campground)
-    check_out = add_nights(args.checkin, args.nights)
-
-    print(f"Campground : {cg['name']}")
-    print(f"Dates      : {args.checkin} → {check_out} ({args.nights} night(s))")
-    print(f"Occupants  : {args.adults} adult(s)")
-
-    client = RezExpertClient()
-    if args.jsessionid:
-        client.set_cookies(args.jsessionid, args.phpsessid)
-    cfg = _load_campsite_cfg(args.real)
-    _login(client, cg["business_code"], args, cfg=cfg)
-
-    avail = client.get_availability(
-        business_code=cg["business_code"],
-        check_in=args.checkin,
-        check_out=check_out,
-        adults=args.adults,
-    )
-
-    if args.dump_ids:
-        print("\nRaw unit_id dump:")
-        for s in cg["sites"]:
-            print(f"  label={s['label']}  unit_id={s['unit_id']}  available={avail.get(s['unit_id'])}")
-        return
-
-    specific = [s.strip() for s in args.sites.split(",")] if args.sites else None
-    show_availability(cg, avail, args.count, specific)
 
 
 def cmd_book(args):
@@ -957,7 +1006,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python scripts/nsw_campsite.py check --campground coorongooba --checkin 2026-09-04 --nights 2
+  python scripts/nsw_campsite.py check --campground coorongooba --from 2026-06-01 --to 2026-09-30
   python scripts/nsw_campsite.py book  --campground spring-gully --checkin 2026-09-04 --nights 2 --sites 2,3 --adults 1 --real
 """,
     )
@@ -965,32 +1014,30 @@ Examples:
 
     shared = argparse.ArgumentParser(add_help=False)
     shared.add_argument("--campground", required=True,
-                        help=f"Campground key. Known: {', '.join(CAMPGROUNDS)}")
-    shared.add_argument("--checkin",  required=True, metavar="YYYY-MM-DD")
-    shared.add_argument("--nights",   type=int, required=True)
-    shared.add_argument("--adults",   type=int, default=1, help="Adults per site (default: 1)")
-    shared.add_argument("--real", action="store_true",
-                        help="Use sam identity from config.py (real card details); default is gordon (test identity)")
-    shared.add_argument("--jsessionid", default=None,
-                        help="JSESSIONID cookie from browser (until login is automated)")
-    shared.add_argument("--phpsessid",  default=None,
-                        help="PHPSESSID cookie from browser (until login is automated)")
+                        help=f"Campground name or slug. Known keys: {', '.join(CAMPGROUNDS)}")
+    shared.add_argument("--adults", type=int, default=1, help="Number of adults (default: 1)")
 
-    chk = sub.add_parser("check", parents=[shared], help="Show campsite availability")
-    chk.add_argument("--count",    type=int, default=None,
-                     help="Find groups of N adjacent available sites")
-    chk.add_argument("--sites",    default=None,
-                     help="Comma-separated site numbers to check, e.g. 2,3,4")
-    chk.add_argument("--dump-ids", action="store_true",
-                     help="Print raw unit_ids (useful for adding new campgrounds)")
+    chk = sub.add_parser("check", parents=[shared], help="Show available dates (no login required)")
+    chk.add_argument("--from", dest="from_date", required=True, metavar="YYYY-MM-DD")
+    chk.add_argument("--to",   dest="to_date",   required=True, metavar="YYYY-MM-DD")
+    chk.add_argument("--weekends", action="store_true",
+                     help="Show Fri–Mon weekend blocks instead of individual dates")
 
     bk = sub.add_parser("book", parents=[shared], help="Book specific sites")
+    bk.add_argument("--checkin", required=True, metavar="YYYY-MM-DD")
+    bk.add_argument("--nights",  type=int, required=True)
     bk.add_argument("--sites", default=None,
                     help="Comma-separated site numbers to book, e.g. 2,3,4 "
                          "(omit for camp-anywhere campgrounds)")
     bk.add_argument("--dry-run", action="store_true",
                     help="Run the full booking flow up to payment initiation, "
                          "then stop without charging the card")
+    bk.add_argument("--real", action="store_true",
+                    help="Use sam identity from config.py (real card details); default is gordon (test identity)")
+    bk.add_argument("--jsessionid", default=None,
+                    help="JSESSIONID cookie from browser (until login is automated)")
+    bk.add_argument("--phpsessid",  default=None,
+                    help="PHPSESSID cookie from browser (until login is automated)")
     return p
 
 
