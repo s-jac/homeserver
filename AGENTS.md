@@ -6,7 +6,7 @@ This file documents the homeserver codebase, conventions, and gotchas for AI age
 
 ## What this repo is
 
-A Raspberry Pi (hostname: `jim`, user: `gmac`) running a Flask web app that manages scheduled automation scripts. Everything lives here — the web app, all scripts, and config templates. Sensitive config lives outside the repo at `~/homeserver/config/config.json` (gitignored).
+A Raspberry Pi (hostname: `jim`, user: `gmac`) running a Flask web app that manages scheduled automation scripts. Everything lives here — the web app, all scripts, and config templates. Sensitive config lives outside the repo at `~/homeserver/config/config.py` (gitignored).
 
 ---
 
@@ -23,8 +23,8 @@ app.py                  Flask web app
 gunicorn.conf.py        Gunicorn config — logs to logs/, binds 0.0.0.0:5000
 homeserver.service      Systemd unit (copy to /etc/systemd/system/ after edits)
 config/
-  config.json           GITIGNORED — all secrets live here
-  config.sample.json    Template — update this when adding new config keys
+  config.py             GITIGNORED — all secrets live here (auth, email, gordon, sam)
+  config.sample.py      Template — update this when adding new config keys
   jobs.json             GITIGNORED — live job state (last_run, enabled, etc)
 scripts/
   gym.py                HIIT booking script
@@ -38,16 +38,17 @@ logs/                   GITIGNORED — access.log, error.log, gym.log
 
 ## Config
 
-Single file `config/config.json` with sections:
-- `auth` — login password, JWT secret, token expiry
-- `email` — Gmail SMTP for failure notifications
-- `gym` — personal details for HIIT booking
-- `campsite` — real rezexpert credentials + card details (used with `--real`)
-- `campsite_fake` — safe dummy values for dry-run testing (default for nsw_campsite.py)
+Single file `config/config.py` with top-level names:
+- `auth` — login password, JWT secret, token expiry (used by app.py)
+- `email` — Gmail SMTP for failure notifications (used by notify.py)
+- `gordon` — fake/test identity dict (default for all scripts)
+- `sam` — real identity dict (used when `--real` is passed)
 
-**Never print or log the full contents of config.json.** It contains live passwords and card details.
+Both `gordon` and `sam` have the same fields: `first_name`, `last_name`, `email`, `mobile`, `password`, `phone`, `address`, `city`, `state`, `postcode`, `vehicle_rego`, `vehicle_state`, `card_number`, `card_expiry_month`, `card_expiry_year`, `card_cvv`, `card_name`.
 
-When adding new config keys, always update `config/config.sample.json` too.
+**Never print or log the full contents of config.py.** It contains live passwords and card details.
+
+When adding new config keys, always update `config/config.sample.py` too.
 
 ---
 
@@ -55,10 +56,11 @@ When adding new config keys, always update `config/config.sample.json` too.
 
 Key globals:
 ```python
-BASE_DIR    = Path(__file__).parent               # ~/homeserver/
-CONFIG_FILE = BASE_DIR / "config" / "config.json"
-JOBS_FILE   = BASE_DIR / "config" / "jobs.json"
+BASE_DIR  = Path(__file__).parent               # ~/homeserver/
+JOBS_FILE = BASE_DIR / "config" / "jobs.json"
 ```
+
+Loads `config.py` via `importlib` on each request (so changes take effect without restart). The settings PATCH endpoint returns 501 — edit `config/config.py` directly to change auth/email settings.
 
 Script path resolution in `run_job`: relative paths are resolved from `BASE_DIR` (e.g. `"scripts/gym.py"` → `~/homeserver/scripts/gym.py`).
 
@@ -78,26 +80,25 @@ Both gym jobs are currently **disabled** (`"enabled": false`). Enable from the U
 
 ## gym.py
 
-- Reads credentials from `config.json["gym"]` and job state from `config/jobs.json`
-- Writes job status back to `config/jobs.json` after each run
+- Imports identity from `config.py` (`gordon` by default, `sam` with `--real`)
+- Reads job state from `config/jobs.json`, writes status back after each run
 - Saves HTML booking responses to `logs/booking_response_<date>.html` (keeps last 10)
-- On failure (real run only): calls `notify.send_notification()`
-- `--fake` uses hardcoded test credentials, `--dry-run` stops before final POST
+- On failure: calls `notify.send_notification()` only on `--real` runs
 
 ---
 
 ## nsw_campsite.py
 
-- Default (`--real` not passed): uses `config.json["campsite_fake"]` — safe for testing
-- `--real`: uses `config.json["campsite"]` — charges the actual card
-- `_load_campsite_cfg(real)` loads the appropriate section from `CONFIG_FILE`
+- Default: uses `cfg.gordon` — safe for testing (fake card, no real charge)
+- `--real`: uses `cfg.sam` — charges the actual card
+- `_load_campsite_cfg(real)` returns the appropriate identity dict from `config.py`
 - `cmd_check` also loads config (needed for rezexpert login to check availability)
 
 ---
 
 ## notify.py
 
-Reads `config.json["email"]`. Silently returns if `email.enabled` is false or `app_password` is empty. Used only by `gym.py`.
+Imports `config.email`. Silently returns if `email["enabled"]` is false or `app_password` is empty. Used only by `gym.py`.
 
 ---
 
@@ -143,10 +144,11 @@ Config source of truth: `~/homeserver/logrotate.conf` (installed to `/etc/logrot
 
 ## Gotchas
 
-- **config.json and jobs.json are gitignored** — never try to `git add` them
+- **config.py and jobs.json are gitignored** — never try to `git add` them
 - **jobs.json is live state** — both app.py and gym.py write to it; don't overwrite casually
 - **Both gym jobs are disabled by default** — cron runs but the script exits early
-- **nsw_campsite.py defaults to fake config** — must pass `--real` to actually book/charge
+- **Scripts default to gordon (fake identity)** — must pass `--real` to actually book/charge
 - **The homeserver must be restarted** after `app.py` changes to take effect
 - **systemd doesn't expand `~`** — the service file uses `/home/gmac/` explicitly
-- **config.sample.json is committed** — it has no secrets and documents all keys
+- **config.sample.py is committed** — it has no secrets and documents all keys
+- **Web UI cannot persist settings changes** — edit `config/config.py` directly

@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import subprocess
@@ -8,16 +9,18 @@ from pathlib import Path
 import jwt
 from flask import Flask, request, jsonify, render_template, abort
 
-BASE_DIR     = Path(__file__).parent
-CONFIG_FILE  = BASE_DIR / "config" / "config.json"
-JOBS_FILE    = BASE_DIR / "config" / "jobs.json"
+BASE_DIR   = Path(__file__).parent
+JOBS_FILE  = BASE_DIR / "config" / "jobs.json"
 
 app = Flask(__name__)
 
 
 def load_config():
-    with open(CONFIG_FILE) as f:
-        return json.load(f)
+    # Reload config.py fresh each call so changes take effect without restart
+    spec = importlib.util.spec_from_file_location("config", BASE_DIR / "config" / "config.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return {"auth": mod.auth, "email": mod.email}
 
 
 def load_jobs():
@@ -134,17 +137,7 @@ def get_settings():
 @app.route("/api/settings", methods=["PATCH"])
 @require_auth
 def update_settings():
-    data = request.get_json(silent=True) or {}
-    config = load_config()
-    if "email" in data:
-        for key in ("enabled", "from_address", "to_address", "username", "app_password"):
-            if key in data["email"]:
-                config["email"][key] = data["email"][key]
-    if "password" in data and data["password"]:
-        config["auth"]["password"] = data["password"]
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config, f, indent=2)
-    return jsonify({"ok": True})
+    return jsonify({"error": "Settings are managed in config/config.py — edit the file directly."}), 501
 
 
 # --- Frontend ---

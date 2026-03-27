@@ -18,8 +18,8 @@ gunicorn.conf.py           Gunicorn config (workers, log paths, bind address)
 homeserver.service         Systemd unit file (also installed at /etc/systemd/system/)
 requirements.txt           Python dependencies
 config/
-  config.json              Runtime config — gitignored, populate from config.sample.json
-  config.sample.json       Template with all keys and descriptions
+  config.py                All config (auth, email, identities) — gitignored, populate from config.sample.py
+  config.sample.py         Template — copy to config.py and fill in real values
   jobs.json                Job definitions and last-run state — gitignored
 scripts/
   gym.py                   HIIT class auto-booker (Manly Aquatic Centre)
@@ -35,22 +35,23 @@ logs/                      Access, error, and job logs (logrotated, gitignored)
 See [homeserver-setup](https://github.com/s-jac/homeserver-setup) — `install.sh` handles everything in one command. After running it:
 
 ```bash
-cp ~/homeserver/config/config.sample.json ~/homeserver/config/config.json
-chmod 600 ~/homeserver/config/config.json
-# Fill in config.json with real credentials
+cp ~/homeserver/config/config.sample.py ~/homeserver/config/config.py
+chmod 600 ~/homeserver/config/config.py
+# Fill in config.py — auth, email, and the sam identity dict
 ```
 
 ## Config
 
-All config lives in `config/config.json` (gitignored). Top-level sections:
+All config lives in `config/config.py` (gitignored). Top-level names:
 
-| Section | Used by |
-|---------|---------|
+| Name | Used by |
+|------|---------|
 | `auth` | app.py — login password, JWT secret |
 | `email` | notify.py — Gmail SMTP for failure alerts |
-| `gym` | gym.py — personal details for HIIT booking |
-| `campsite` | nsw_campsite.py — rezexpert login, personal, vehicle, card (real) |
-| `campsite_fake` | nsw_campsite.py — dummy credentials for dry-run testing |
+| `gordon` | scripts (default) — safe test identity, fake card details |
+| `sam` | scripts with `--real` — real credentials, charges the card |
+
+Edit `config.py` directly to change any settings — the web UI does not persist changes.
 
 ## Jobs
 
@@ -66,31 +67,31 @@ The UI at `http://<tailscale-ip>:5000` shows last run time, status, and output p
 
 ### gym.py
 
-Auto-books 7am HIIT classes at Manly Aquatic Centre (nabooki.com). Runs Saturday 00:30 to book Tuesday, and Monday 00:30 to book Thursday (booking window opens 3 days in advance). Reads credentials from `config.json["gym"]`. Sends an email via notify.py on failure.
+Auto-books 7am HIIT classes at Manly Aquatic Centre (nabooki.com). Runs Saturday 00:30 to book Tuesday, and Monday 00:30 to book Thursday (booking window opens 3 days in advance). Uses the gordon identity by default; pass `--real` to use sam. Sends an email via notify.py on failure (real runs only).
 
 ```bash
-# Manual run for a specific date
-~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01
-
-# Dry run — all steps but no final confirmation POST
+# Dry run with gordon (test identity, no real booking)
 ~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run
 
-# Fake credentials (no real booking)
-~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --fake
+# Dry run with real sam credentials
+~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run --real
+
+# Real run
+~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --real
 ```
 
 ### nsw_campsite.py
 
-Check availability and book NSW National Parks campsites via the rezexpert API and Westpac payment gateway. Run manually, not via cron.
+Check availability and book NSW National Parks campsites via the rezexpert API and Westpac payment gateway. Run manually, not via cron. Uses gordon identity by default; pass `--real` to use sam.
 
 ```bash
-# Check availability (uses campsite_fake credentials by default)
+# Check availability
 ~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py check --campground frazer --checkin 2026-09-04 --nights 2
 
-# Book — dry run stops before charging the card
+# Book dry run (gordon — stops before charging the card)
 ~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --dry-run
 
-# Book for real (uses config.json["campsite"], charges the card)
+# Book for real (sam identity — charges the card)
 ~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --real
 ```
 
@@ -100,4 +101,4 @@ Check availability and book NSW National Parks campsites via the rezexpert API a
 2. Add an entry to `config/jobs.json`
 3. Add a cron line (`crontab -e`) pointing at `~/venv/bin/python ~/homeserver/scripts/yourscript.py`
 4. Update `~/setup/install.sh` with the cron entry
-5. Add any new config keys to `config/config.sample.json`
+5. Add any new config keys to `config/config.sample.py`

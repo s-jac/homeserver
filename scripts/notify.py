@@ -1,16 +1,16 @@
 """Email notification helper. Import and call send_notification() from job scripts."""
 
-import json
 import smtplib
+import sys
 from email.message import EmailMessage
 from pathlib import Path
 
-CONFIG_FILE = Path(__file__).parent.parent / "config" / "config.json"
+sys.path.insert(0, str(Path(__file__).parent.parent / "config"))
+import config as _cfg
 
 
 def send_notification(subject: str, body: str):
-    with open(CONFIG_FILE) as f:
-        cfg = json.load(f).get("email", {})
+    cfg = _cfg.email
     if not cfg.get("enabled"):
         return
 
