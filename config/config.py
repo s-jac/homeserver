@@ -3,29 +3,6 @@
 # Two identities:
 #   gordon  — fake/test identity (default). Safe to use for dry-runs and dev.
 #   sam     — real identity. Used when scripts are called with --real.
-#
-# App settings (auth, email) are also here. Edit this file directly to change them —
-# they are not editable via the web UI.
-
-# ── App ──────────────────────────────────────────────────────────────────────
-
-auth = {
-    "password": "changeme",
-    # Generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
-    "jwt_secret": "replace-with-64-char-hex-string",
-    "token_expiry_hours": 168,
-}
-
-email = {
-    "enabled": False,
-    "from_address": "you@gmail.com",
-    "to_address": "you@gmail.com",
-    "smtp_host": "smtp.gmail.com",
-    "smtp_port": 587,
-    "username": "you@gmail.com",
-    "app_password": "",  # Gmail app password (Settings > Security > App passwords)
-}
-
 
 # ── Gordon (fake/test identity) ───────────────────────────────────────────────
 
