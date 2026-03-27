@@ -15,27 +15,45 @@ A personal automation server running on a Raspberry Pi. Accessible privately via
 ```
 app.py               Flask app — auth, jobs API, settings API
 gunicorn.conf.py     Gunicorn config (workers, log paths, bind address)
-homeserver.service   Systemd unit file (copy to /etc/systemd/system/ on fresh install)
-requirements.txt     Python dependencies for the venv
-setup.sh             Recreates the environment from scratch on a new machine
-config/              Runtime config (secrets, job state) — not committed
-scripts/             Automation scripts, one per job
+homeserver.service   Systemd unit file (also installed at /etc/systemd/system/)
+requirements.txt     Python dependencies
+config/
+  settings.example.json   Template — copy to ~/config/homeserver/settings.json
 templates/           Frontend HTML
-logs/                Access, error, and job logs
-venv/                Python virtualenv — not committed
+logs/                Access and error logs (logrotated)
 ```
 
-## Setup on a new machine
+Config and job state live outside this repo at `~/config/homeserver/` — see below.
 
-```bash
-bash setup.sh
-# Then fill in config/settings.json with real credentials
-# Then add cron jobs — see scripts/README.md
-```
+## Runtime config (outside repo)
+
+| File | Contents |
+|------|----------|
+| `~/config/homeserver/settings.json` | Auth password, JWT secret, gym credentials, email config |
+| `~/config/homeserver/jobs.json` | Job definitions and last-run state |
+
+Both files are `chmod 600`. See `config/settings.example.json` for the expected shape.
+
+The shared Python environment is at `~/venv/`.
+
+## Fresh install
+
+See the [homeserver-setup](https://github.com/s-jac/homeserver-setup) repo — `install.sh` handles cloning, venv creation, systemd, logrotate, and crontab in one command.
+
+## Jobs
+
+Jobs are defined in `~/config/homeserver/jobs.json`. Each job has:
+
+- `script` — absolute path to the Python script to run
+- `cron` — schedule (display only; actual cron entry lives in the user crontab)
+- `enabled` — toggled from the UI; scripts check this flag and exit early if false
+- `params` — arbitrary key/value data (informational, passed as context)
+
+The UI at `http://<tailscale-ip>:5000` shows each job's last run time, status, and output, and lets you enable/disable or manually trigger a run.
 
 ## Adding a new job
 
-1. Add a script in `scripts/`
-2. Add an entry in `config/jobs.json`
-3. Add a cron line (`crontab -e`)
-4. Update `scripts/README.md`
+1. Create the script in its own repo (e.g. `~/my-script/`)
+2. Add an entry to `~/config/homeserver/jobs.json`
+3. Add a cron line (`crontab -e`) pointing at `~/venv/bin/python ~/my-script/script.py`
+4. Update `~/setup/install.sh` to clone the new repo and register the cron entry
