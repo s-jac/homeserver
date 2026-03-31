@@ -2,7 +2,17 @@
 
 Backs up the Pi's crontab to `crontab.txt` in this repo, committed and pushed to GitHub on a schedule. Useful for disaster recovery when rebuilding the Pi.
 
-## How it works
+## Scripts
+
+### pull.py
+
+Runs `git pull` on the homeserver repo and restarts the `homeserver` systemd service if `app.py` changed. Run hourly via cron. No restart if `app.py` is unchanged.
+
+```bash
+python ~/homeserver/cron/pull.py
+```
+
+### cron.py
 
 `cron.py backup` runs periodically (via a cron job), dumps `crontab -l` to `crontab.txt`, and pushes the change to GitHub. The cron job that runs the backup is itself captured in `crontab.txt`, so the whole setup is self-documenting — albeit slightly circular.
 

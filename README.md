@@ -22,6 +22,7 @@ config/
   config.sample.py         Template — copy to config.py and fill in real values
   jobs.json                Job definitions and last-run state — gitignored
 cron/
+  pull.py                  Hourly git pull + conditional homeserver restart if app.py changed
   cron.py                  Crontab backup/restore script (backup + install commands)
   crontab.txt              Latest crontab snapshot (auto-updated daily at 4am AEST)
   README.md                Setup and usage docs

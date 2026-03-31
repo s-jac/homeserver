@@ -27,6 +27,7 @@ config/
   config.sample.py      Template — update this when adding new config keys
   jobs.json             GITIGNORED — live job state (last_run, enabled, etc)
 cron/
+  pull.py               Hourly git pull + restarts homeserver service if app.py changed
   cron.py               Crontab backup/restore — `backup` and `install` subcommands
   crontab.txt           Latest crontab snapshot (committed, auto-updated daily)
   README.md             Setup docs
@@ -126,10 +127,14 @@ sudo systemctl restart homeserver
 ```
 30 0 * * SAT  $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
 30 0 * * MON  $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
+0 22 * * *    $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/news.py --real >> $HOME/homeserver/logs/news.log 2>&1
+0  * * * *    $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/pull.py >> $HOME/homeserver/logs/cron.log 2>&1
 0 18 * * *    $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/cron.py backup >> $HOME/homeserver/logs/cron.log 2>&1
 ```
 
 Cron uses `$HOME` expansion. The schedule is also stored in `jobs.json` for display in the UI, but the actual trigger is the crontab entry.
+
+`pull.py` runs hourly — pulls latest from GitHub and restarts `homeserver.service` only if `app.py` changed. This means pushing from a dev machine propagates to the Pi within the hour automatically.
 
 The crontab itself is backed up daily at 4am AEST (`0 18 * * *` UTC) — `cron/crontab.txt` is the source of truth. To restore on a new device: `python ~/homeserver/cron/cron.py install`.
 
