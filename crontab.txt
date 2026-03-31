@@ -3,4 +3,4 @@
 30 0 * * MON $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
 0 22 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/news.py --real >> $HOME/homeserver/logs/news.log 2>&1
 0 18 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/cron.py backup >> $HOME/homeserver/logs/cron.log 2>&1
-0 * * * * git -C $HOME/homeserver pull >> $HOME/homeserver/logs/cron.log 2>&1
+0 * * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/pull.py >> $HOME/homeserver/logs/cron.log 2>&1
