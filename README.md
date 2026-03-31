@@ -21,6 +21,10 @@ config/
   config.py                All config (auth, email, identities) — gitignored, populate from config.sample.py
   config.sample.py         Template — copy to config.py and fill in real values
   jobs.json                Job definitions and last-run state — gitignored
+cron/
+  cron.py                  Crontab backup/restore script (backup + install commands)
+  crontab.txt              Latest crontab snapshot (auto-updated daily at 4am AEST)
+  README.md                Setup and usage docs
 scripts/
   gym.py                   HIIT class auto-booker (Manly Aquatic Centre)
   nsw_campsite.py          NSW National Parks campsite booking
@@ -99,6 +103,7 @@ Check availability and book NSW National Parks campsites via the rezexpert API a
 
 1. Add a script to `scripts/`
 2. Add an entry to `config/jobs.json`
-3. Add a cron line (`crontab -e`) pointing at `~/venv/bin/python ~/homeserver/scripts/yourscript.py`
+3. Add a cron line (`crontab -e`) pointing at `~/homeserver/venv/bin/python ~/homeserver/scripts/yourscript.py`
 4. Update `~/setup/install.sh` with the cron entry
 5. Add any new config keys to `config/config.sample.py`
+6. Run `python ~/homeserver/cron/cron.py backup` to snapshot the updated crontab

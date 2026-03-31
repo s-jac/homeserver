@@ -26,6 +26,10 @@ config/
   config.py             GITIGNORED — all secrets live here (auth, email, gordon, sam)
   config.sample.py      Template — update this when adding new config keys
   jobs.json             GITIGNORED — live job state (last_run, enabled, etc)
+cron/
+  cron.py               Crontab backup/restore — `backup` and `install` subcommands
+  crontab.txt           Latest crontab snapshot (committed, auto-updated daily)
+  README.md             Setup docs
 scripts/
   gym.py                HIIT booking script
   nsw_campsite.py       NSW NP campsite booking script
@@ -64,7 +68,7 @@ Loads `config.py` via `importlib` on each request (so changes take effect withou
 
 Script path resolution in `run_job`: relative paths are resolved from `BASE_DIR` (e.g. `"scripts/gym.py"` → `~/homeserver/scripts/gym.py`).
 
-Venv python: `BASE_DIR.parent / "venv" / "bin" / "python"` (i.e. `~/venv/bin/python`).
+Venv python: `BASE_DIR / "venv" / "bin" / "python"` (i.e. `~/homeserver/venv/bin/python`).
 
 After changes to app.py: `sudo systemctl restart homeserver`.
 
@@ -120,11 +124,16 @@ sudo systemctl restart homeserver
 ## Cron
 
 ```
-30 0 * * SAT  ~/venv/bin/python ~/homeserver/scripts/gym.py >> ~/homeserver/logs/gym.log 2>&1
-30 0 * * MON  ~/venv/bin/python ~/homeserver/scripts/gym.py >> ~/homeserver/logs/gym.log 2>&1
+30 0 * * SAT  $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
+30 0 * * MON  $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
+0 18 * * *    $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/cron.py backup >> $HOME/homeserver/logs/cron.log 2>&1
 ```
 
 Cron uses `$HOME` expansion. The schedule is also stored in `jobs.json` for display in the UI, but the actual trigger is the crontab entry.
+
+The crontab itself is backed up daily at 4am AEST (`0 18 * * *` UTC) — `cron/crontab.txt` is the source of truth. To restore on a new device: `python ~/homeserver/cron/cron.py install`.
+
+After adding or changing any cron jobs, run `python ~/homeserver/cron/cron.py backup` to snapshot immediately rather than waiting for the daily run.
 
 ---
 
