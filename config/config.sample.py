@@ -27,6 +27,16 @@ email = {
 }
 
 
+# ── News Digest ──────────────────────────────────────────────────────────────
+
+gemini_api_key = ""  # Get from aistudio.google.com/apikey
+
+github_token = ""  # GitHub PAT with contents:write on s-jac/s-jac.github.io
+                   # Create at: github.com/settings/tokens → Classic → repo scope
+
+news_recipients = ["you@example.com", "partner@example.com"]
+
+
 # ── Gordon (fake/test identity) ───────────────────────────────────────────────
 
 gordon = {
