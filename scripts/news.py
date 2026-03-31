@@ -28,7 +28,8 @@ from typing import List
 
 import requests
 from google import genai
-from google.genai import types
+from google.api_core.exceptions import ResourceExhausted
+from google.genai import errors as genai_errors, types
 from google.genai.types import ThinkingConfig
 from pydantic import BaseModel
 
@@ -39,12 +40,40 @@ GEMINI_MODEL = "gemini-2.5-flash"
 PORTFOLIO_REPO = "s-jac/s-jac.github.io"
 PORTFOLIO_DATA_PATH = "_data/news.json"
 
-RSS_FEEDS = [
-    ("World",     "https://feeds.bbci.co.uk/news/world/rss.xml"),
-    ("Tech",      "https://feeds.bbci.co.uk/news/technology/rss.xml"),
-    ("Australia", "https://www.abc.net.au/news/feed/51120/rss.xml"),
-    ("Science",   "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"),
+RSS_FEED_GROUPS = [
+    ("World", [
+        ("World | Centre",       "https://feeds.bbci.co.uk/news/world/rss.xml"),
+        ("World | Centre",       "https://rsshub.app/apnews/topics/apf-topnews"),
+        ("World | Centre-Left",  "https://www.theguardian.com/world/rss"),
+        ("World | Centre-Right", "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
+    ]),
+    ("Australia", [
+        ("Australia | Centre",       "https://www.abc.net.au/news/feed/51120/rss.xml"),
+        ("Australia | Centre-Right", "https://www.theaustralian.com.au/feed"),
+        ("Australia | Centre-Left",  "https://www.theguardian.com/au/rss"),
+        ("Australia | Centre",       "https://www.smh.com.au/rss/feed.xml"),
+    ]),
+    ("Tech", [
+        ("Tech | Centre",      "https://feeds.arstechnica.com/arstechnica/index"),
+        ("Tech | Centre",      "https://www.technologyreview.com/feed/"),
+        ("Tech | Centre-Left", "https://www.wired.com/feed/rss"),
+        ("Tech | Centre",      "https://techcrunch.com/feed/"),
+    ]),
+    ("Science & Medical", [
+        ("Science | Centre", "https://www.newscientist.com/feed/home/"),
+        ("Science | Centre", "https://feeds.nature.com/nature/rss/current"),
+        ("Science | Centre", "https://rss.sciencedaily.com/all.xml"),
+        ("Medical | Centre", "https://www.statnews.com/feed/"),
+    ]),
+    ("Economics", [
+        ("Economics | Centre",      "https://www.ft.com/rss/home"),
+        ("Economics | Centre",      "https://feeds.bloomberg.com/markets/news.rss"),
+        ("Economics | Centre-Left", "https://www.economist.com/finance-and-economics/rss.xml"),
+        ("Economics | Centre",      "https://www.project-syndicate.org/rss"),
+        ("Economics | Centre",      "https://feeds.feedburner.com/marginalrevolution"),
+    ]),
 ]
+
 MAX_ITEMS_PER_FEED = 8
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -53,9 +82,14 @@ log = logging.getLogger(__name__)
 
 # ── Response schema ───────────────────────────────────────────────────────────
 
+class SourcedStory(BaseModel):
+    headline: str
+    summary: str
+    url: str
+
 class NewsSection(BaseModel):
     heading: str
-    summary: str
+    stories: List[SourcedStory]
 
 class NewsDigest(BaseModel):
     sections: List[NewsSection]
@@ -71,15 +105,16 @@ def fetch_rss(url: str, max_items: int) -> list:
     for item in root.iter("item"):
         title = item.findtext("title", "").strip()
         desc  = item.findtext("description", "").strip()
+        link  = item.findtext("link", "").strip()
         if title:
-            items.append(f"- {title}: {desc[:200]}")
+            items.append(f"- {title}: {desc[:200]} [source: {link}]")
         if len(items) >= max_items:
             break
     return items
 
-def build_headlines() -> str:
+def build_headlines(feeds: list) -> str:
     lines = ["Here are today's top headlines:\n"]
-    for category, url in RSS_FEEDS:
+    for category, url in feeds:
         try:
             items = fetch_rss(url, MAX_ITEMS_PER_FEED)
             lines.append(f"## {category}")
@@ -95,25 +130,42 @@ def build_headlines() -> str:
 
 SYSTEM_PROMPT = """You are a news editor writing a concise daily digest for a general audience.
 You will receive today's top headlines from several RSS feeds, grouped by category.
-For each category, write a 2-3 sentence summary of the most important stories.
-Be clear, factual, and neutral in tone."""
+For each category, select the 3 most important and distinct stories and write a 1-2 sentence summary for each.
+Each headline includes a [source: URL] tag — you MUST copy this URL verbatim into the url field. Do not invent, shorten, or modify any URL.
+If a story has no source URL, set url to an empty string.
+Be clear, factual, and neutral in tone. Output only 3 stories per section, no more."""
 
-def call_gemini(headlines: str) -> NewsDigest:
-    client = genai.Client(api_key=cfg.gemini_api_key)
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
-        temperature=0.8,
-        max_output_tokens=2000,
-        response_mime_type="application/json",
-        response_schema=NewsDigest,
-        thinking_config=ThinkingConfig(include_thoughts=False, thinking_budget=0),
-    )
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=headlines,
-        config=config,
-    )
-    return response.parsed
+GEMINI_CONFIG = types.GenerateContentConfig(
+    system_instruction=SYSTEM_PROMPT,
+    temperature=0.8,
+    max_output_tokens=8000,
+    response_mime_type="application/json",
+    response_schema=NewsDigest,
+    thinking_config=ThinkingConfig(include_thoughts=False, thinking_budget=0),
+)
+
+def call_gemini(topic: str, headlines: str, key_index: int = 0) -> tuple[NewsDigest, int]:
+    api_keys = cfg.gemini_api_keys
+    for i in range(key_index, len(api_keys)):
+        client = genai.Client(api_key=api_keys[i])
+        try:
+            response = client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=headlines,
+                config=GEMINI_CONFIG,
+            )
+            if response.parsed is None:
+                log.error(f"Gemini returned unparseable response for {topic}: {response.text[:500]}")
+                raise ValueError(f"Gemini response could not be parsed into NewsDigest for topic: {topic}")
+            return response.parsed, i
+        except (genai_errors.ClientError, ResourceExhausted) as e:
+            if '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e):
+                if i + 1 < len(api_keys):
+                    log.warning(f"Rate limited on {topic} (key {i}), switching to next key")
+                else:
+                    raise
+            else:
+                raise
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
@@ -127,7 +179,12 @@ def send_email(digest: NewsDigest, today: str) -> None:
     lines = [f"Daily News — {today}", "=" * 40, ""]
     for section in digest.sections:
         lines.append(section.heading.upper())
-        lines.append(section.summary)
+        for story in section.stories:
+            lines.append(f"  • {story.headline}")
+            lines.append(f"    {story.summary}")
+            if story.url:
+                lines.append(f"    {story.url}")
+            lines.append("")
         lines.append("")
     body = "\n".join(lines)
 
@@ -154,14 +211,22 @@ def push_to_github(digest: NewsDigest, today: str) -> None:
     }
     api_url = f"https://api.github.com/repos/{PORTFOLIO_REPO}/contents/{PORTFOLIO_DATA_PATH}"
 
-    # Fetch current file SHA (required to update an existing file)
     get_resp = requests.get(api_url, headers=headers, timeout=15)
     sha = get_resp.json().get("sha") if get_resp.status_code == 200 else None
 
     data = {
         "date": today,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "sections": [{"heading": s.heading, "summary": s.summary} for s in digest.sections],
+        "sections": [
+            {
+                "heading": s.heading,
+                "stories": [
+                    {"headline": st.headline, "summary": st.summary, "url": st.url}
+                    for st in s.stories
+                ],
+            }
+            for s in digest.sections
+        ],
     }
     payload = {
         "message": f"daily news update {today}",
@@ -194,18 +259,27 @@ def main():
 
     today = datetime.now(timezone.utc).strftime("%-d %B %Y")
 
-    log.info("Fetching RSS feeds")
-    headlines = build_headlines()
+    all_sections = []
+    key_index = 0
+    for topic, feeds in RSS_FEED_GROUPS:
+        log.info(f"Fetching RSS feeds for {topic}")
+        headlines = build_headlines(feeds)
+        log.info(f"Calling Gemini for {topic}")
+        topic_digest, key_index = call_gemini(topic, headlines, key_index)
+        all_sections.extend(topic_digest.sections)
 
-    log.info("Calling Gemini")
-    digest = call_gemini(headlines)
+    digest = NewsDigest(sections=all_sections)
 
     print(f"\n{'=' * 40}")
     print(f"  {today}")
     print(f"{'=' * 40}")
     for section in digest.sections:
         print(f"\n{section.heading.upper()}")
-        print(section.summary)
+        for story in section.stories:
+            print(f"  • {story.headline}")
+            print(f"    {story.summary}")
+            if story.url:
+                print(f"    {story.url}")
     print()
 
     if not args.real and not args.email_only:

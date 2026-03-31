@@ -29,7 +29,7 @@ email = {
 
 # ── News Digest ──────────────────────────────────────────────────────────────
 
-gemini_api_key = ""  # Get from aistudio.google.com/apikey
+gemini_api_keys = [""]  # Add keys from multiple projects for quota fallback
 
 github_token = ""  # GitHub PAT with contents:write on s-jac/s-jac.github.io
                    # Create at: github.com/settings/tokens → Classic → repo scope
