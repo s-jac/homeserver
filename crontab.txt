@@ -1,0 +1,3 @@
+# Gym class bookings — 3 days before 7am class
+30 0 * * SAT $HOME/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
+30 0 * * MON $HOME/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
