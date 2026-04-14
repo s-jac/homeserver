@@ -42,35 +42,21 @@ PORTFOLIO_DATA_PATH = "_data/news.json"
 
 RSS_FEED_GROUPS = [
     ("World", [
-        ("World | Centre",       "https://feeds.bbci.co.uk/news/world/rss.xml"),
-        ("World | Centre",       "https://rsshub.app/apnews/topics/apf-topnews"),
-        ("World | Centre-Left",  "https://www.theguardian.com/world/rss"),
-        ("World | Centre-Right", "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
+        ("BBC World",     "https://feeds.bbci.co.uk/news/world/rss.xml"),
+        ("AP News",       "https://rsshub.app/apnews/topics/apf-topnews"),
+        ("The Guardian",  "https://www.theguardian.com/world/rss"),
+        ("MarketWatch",   "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
     ]),
     ("Australia", [
-        ("Australia | Centre",       "https://www.abc.net.au/news/feed/51120/rss.xml"),
-        ("Australia | Centre-Right", "https://www.theaustralian.com.au/feed"),
-        ("Australia | Centre-Left",  "https://www.theguardian.com/au/rss"),
-        ("Australia | Centre",       "https://www.smh.com.au/rss/feed.xml"),
-    ]),
-    ("Tech", [
-        ("Tech | Centre",      "https://feeds.arstechnica.com/arstechnica/index"),
-        ("Tech | Centre",      "https://www.technologyreview.com/feed/"),
-        ("Tech | Centre-Left", "https://www.wired.com/feed/rss"),
-        ("Tech | Centre",      "https://techcrunch.com/feed/"),
-    ]),
-    ("Science & Medical", [
-        ("Science | Centre", "https://www.newscientist.com/feed/home/"),
-        ("Science | Centre", "https://feeds.nature.com/nature/rss/current"),
-        ("Science | Centre", "https://rss.sciencedaily.com/all.xml"),
-        ("Medical | Centre", "https://www.statnews.com/feed/"),
+        ("ABC News",       "https://www.abc.net.au/news/feed/51120/rss.xml"),
+        ("The Guardian AU","https://www.theguardian.com/au/rss"),
+        ("SMH",            "https://www.smh.com.au/rss/feed.xml"),
     ]),
     ("Economics", [
-        ("Economics | Centre",      "https://www.ft.com/rss/home"),
-        ("Economics | Centre",      "https://feeds.bloomberg.com/markets/news.rss"),
-        ("Economics | Centre-Left", "https://www.economist.com/finance-and-economics/rss.xml"),
-        ("Economics | Centre",      "https://www.project-syndicate.org/rss"),
-        ("Economics | Centre",      "https://feeds.feedburner.com/marginalrevolution"),
+        ("FT",             "https://www.ft.com/rss/home"),
+        ("Bloomberg",      "https://feeds.bloomberg.com/markets/news.rss"),
+        ("The Economist",  "https://www.economist.com/finance-and-economics/rss.xml"),
+        ("Marginal Rev",   "https://feeds.feedburner.com/marginalrevolution"),
     ]),
 ]
 
@@ -123,8 +109,8 @@ def build_headlines(feeds: list) -> str:
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are a news editor writing a concise daily digest for a general audience.
-You will receive today's top headlines from several RSS feeds, grouped by category.
-For each category, write 3-5 bullet points summarising the most important stories.
+You will receive today's top headlines from several RSS feeds for a single topic.
+Write exactly 3 bullet points summarising the 3 most important stories.
 Each bullet should be 1-2 sentences. Be clear, factual, and neutral in tone."""
 
 GEMINI_CONFIG = types.GenerateContentConfig(
