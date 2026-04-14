@@ -82,14 +82,9 @@ log = logging.getLogger(__name__)
 
 # ── Response schema ───────────────────────────────────────────────────────────
 
-class SourcedStory(BaseModel):
-    headline: str
-    summary: str
-    url: str
-
 class NewsSection(BaseModel):
     heading: str
-    stories: List[SourcedStory]
+    bullets: List[str]
 
 class NewsDigest(BaseModel):
     sections: List[NewsSection]
@@ -105,9 +100,8 @@ def fetch_rss(url: str, max_items: int) -> list:
     for item in root.iter("item"):
         title = item.findtext("title", "").strip()
         desc  = item.findtext("description", "").strip()
-        link  = item.findtext("link", "").strip()
         if title:
-            items.append(f"- {title}: {desc[:200]} [source: {link}]")
+            items.append(f"- {title}: {desc[:200]}")
         if len(items) >= max_items:
             break
     return items
@@ -130,10 +124,8 @@ def build_headlines(feeds: list) -> str:
 
 SYSTEM_PROMPT = """You are a news editor writing a concise daily digest for a general audience.
 You will receive today's top headlines from several RSS feeds, grouped by category.
-For each category, select the 3 most important and distinct stories and write a 1-2 sentence summary for each.
-Each headline includes a [source: URL] tag — you MUST copy this URL verbatim into the url field. Do not invent, shorten, or modify any URL.
-If a story has no source URL, set url to an empty string.
-Be clear, factual, and neutral in tone. Output only 3 stories per section, no more."""
+For each category, write 3-5 bullet points summarising the most important stories.
+Each bullet should be 1-2 sentences. Be clear, factual, and neutral in tone."""
 
 GEMINI_CONFIG = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
@@ -179,12 +171,8 @@ def send_email(digest: NewsDigest, today: str) -> None:
     lines = [f"Daily News — {today}", "=" * 40, ""]
     for section in digest.sections:
         lines.append(section.heading.upper())
-        for story in section.stories:
-            lines.append(f"  • {story.headline}")
-            lines.append(f"    {story.summary}")
-            if story.url:
-                lines.append(f"    {story.url}")
-            lines.append("")
+        for bullet in section.bullets:
+            lines.append(f"  • {bullet}")
         lines.append("")
     body = "\n".join(lines)
 
@@ -218,13 +206,7 @@ def push_to_github(digest: NewsDigest, today: str) -> None:
         "date": today,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sections": [
-            {
-                "heading": s.heading,
-                "stories": [
-                    {"headline": st.headline, "summary": st.summary, "url": st.url}
-                    for st in s.stories
-                ],
-            }
+            {"heading": s.heading, "bullets": s.bullets}
             for s in digest.sections
         ],
     }
@@ -275,11 +257,8 @@ def main():
     print(f"{'=' * 40}")
     for section in digest.sections:
         print(f"\n{section.heading.upper()}")
-        for story in section.stories:
-            print(f"  • {story.headline}")
-            print(f"    {story.summary}")
-            if story.url:
-                print(f"    {story.url}")
+        for bullet in section.bullets:
+            print(f"  • {bullet}")
     print()
 
     if not args.real and not args.email_only:
