@@ -68,9 +68,13 @@ log = logging.getLogger(__name__)
 
 # ── Response schema ───────────────────────────────────────────────────────────
 
+class Bullet(BaseModel):
+    text: str
+    source: str  # e.g. "BBC World", "The Guardian"
+
 class NewsSection(BaseModel):
     heading: str
-    bullets: List[str]
+    bullets: List[Bullet]
 
 class NewsDigest(BaseModel):
     sections: List[NewsSection]
@@ -109,9 +113,10 @@ def build_headlines(feeds: list) -> str:
 # ── Gemini ────────────────────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are a news editor writing a concise daily digest for a general audience.
-You will receive today's top headlines from several RSS feeds for a single topic.
+You will receive today's top headlines from several RSS feeds for a single topic, each labelled with its source name.
 Write exactly 3 bullet points summarising the 3 most important stories.
 Each bullet should be 1-2 sentences. Be clear, factual, and neutral in tone.
+For each bullet, set the source field to the name of the feed it came from (e.g. "BBC World", "The Guardian").
 Ignore any sports stories entirely — do not include them in your bullets.
 The heading field must be set to exactly the topic name provided, nothing else."""
 
@@ -160,7 +165,7 @@ def send_email(digest: NewsDigest, today: str) -> None:
     for section in digest.sections:
         lines.append(section.heading.upper())
         for bullet in section.bullets:
-            lines.append(f"  • {bullet}")
+            lines.append(f"  • {bullet.text} [{bullet.source}]")
         lines.append("")
     body = "\n".join(lines)
 
@@ -194,7 +199,7 @@ def push_to_github(digest: NewsDigest, today: str) -> None:
         "date": today,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sections": [
-            {"heading": s.heading, "bullets": s.bullets}
+            {"heading": s.heading, "bullets": [{"text": b.text, "source": b.source} for b in s.bullets]}
             for s in digest.sections
         ],
     }
@@ -248,7 +253,7 @@ def main():
     for section in digest.sections:
         print(f"\n{section.heading.upper()}")
         for bullet in section.bullets:
-            print(f"  • {bullet}")
+            print(f"  • {bullet.text} [{bullet.source}]")
     print()
 
     if not args.real and not args.email_only:
