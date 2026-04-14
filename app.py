@@ -102,7 +102,7 @@ def run_job(job_id):
         script = BASE_DIR / script
     if not script.exists():
         return jsonify({"error": "Script not found"}), 500
-    venv_python = BASE_DIR.parent / "venv" / "bin" / "python"
+    venv_python = BASE_DIR / "venv" / "bin" / "python"
     try:
         result = subprocess.run(
             [str(venv_python), str(script)],
