@@ -40,6 +40,20 @@ GEMINI_MODEL = "gemini-2.5-flash"
 PORTFOLIO_REPO = "s-jac/s-jac.github.io"
 PORTFOLIO_DATA_PATH = "_data/news.json"
 
+SOURCE_URLS = {
+    "BBC World":       "https://www.bbc.com/news/world",
+    "AP News":         "https://apnews.com",
+    "The Guardian":    "https://www.theguardian.com",
+    "MarketWatch":     "https://www.marketwatch.com",
+    "ABC News":        "https://www.abc.net.au/news",
+    "The Guardian AU": "https://www.theguardian.com/au",
+    "SMH":             "https://www.smh.com.au",
+    "FT":              "https://www.ft.com",
+    "Bloomberg":       "https://www.bloomberg.com/markets",
+    "The Economist":   "https://www.economist.com/finance-and-economics",
+    "Marginal Rev":    "https://www.marginalrevolution.com",
+}
+
 RSS_FEED_GROUPS = [
     ("World", [
         ("BBC World",     "https://feeds.bbci.co.uk/news/world/rss.xml"),
@@ -64,6 +78,41 @@ MAX_ITEMS_PER_FEED = 8
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+
+
+# ── Source URL resolver ───────────────────────────────────────────────────────
+
+import re as _re
+
+def _tokens(s: str) -> set:
+    """Lowercase alphanumeric tokens — e.g. 'BBC World' → {'bbc', 'world'}."""
+    return set(_re.sub(r'[^a-z0-9]', ' ', s.lower()).split())
+
+def resolve_source_url(source: str) -> str:
+    """Match Gemini's source label back to a homepage URL.
+
+    Stages (first match wins):
+      1. Exact case-insensitive match
+      2. One is a substring of the other (case-insensitive)
+      3. Any token overlap after stripping punctuation
+    """
+    source_lower = source.lower().strip()
+    source_tokens = _tokens(source)
+
+    for key, url in SOURCE_URLS.items():
+        if key.lower() == source_lower:
+            return url
+
+    for key, url in SOURCE_URLS.items():
+        if key.lower() in source_lower or source_lower in key.lower():
+            return url
+
+    for key, url in SOURCE_URLS.items():
+        if source_tokens & _tokens(key):
+            return url
+
+    log.warning(f"No source URL match for: {source!r}")
+    return ""
 
 
 # ── Response schema ───────────────────────────────────────────────────────────
@@ -165,7 +214,9 @@ def send_email(digest: NewsDigest, today: str) -> None:
     for section in digest.sections:
         lines.append(section.heading.upper())
         for bullet in section.bullets:
-            lines.append(f"  • {bullet.text} [{bullet.source}]")
+            url = resolve_source_url(bullet.source)
+            source_str = f"{bullet.source} {url}" if url else bullet.source
+            lines.append(f"  • {bullet.text} [{source_str}]")
         lines.append("")
     body = "\n".join(lines)
 
@@ -199,7 +250,7 @@ def push_to_github(digest: NewsDigest, today: str) -> None:
         "date": today,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sections": [
-            {"heading": s.heading, "bullets": [{"text": b.text, "source": b.source} for b in s.bullets]}
+            {"heading": s.heading, "bullets": [{"text": b.text, "source": b.source, "url": resolve_source_url(b.source)} for b in s.bullets]}
             for s in digest.sections
         ],
     }
