@@ -28,6 +28,7 @@ cron/
   README.md                Setup and usage docs
 scripts/
   gym.py                   HIIT class auto-booker (Manly Aquatic Centre)
+  news.py                  Daily news digest — RSS → Gemini summary → email + portfolio push
   nsw_campsite.py          NSW National Parks campsite booking
   notify.py                Gmail SMTP notification helper
 templates/
@@ -76,14 +77,31 @@ Auto-books 7am HIIT classes at Manly Aquatic Centre (nabooki.com). Runs Saturday
 
 ```bash
 # Dry run with gordon (test identity, no real booking)
-~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run
+~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run
 
 # Dry run with real sam credentials
-~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run --real
+~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run --real
 
 # Real run
-~/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --real
+~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --real
 ```
+
+### news.py
+
+Fetches top headlines from RSS feeds (BBC, Guardian, ABC, FT, Bloomberg, etc.), summarises each topic group with Gemini (gemini-2.5-flash), emails the digest, and pushes `_data/news.json` to the portfolio GitHub repo. Runs daily at 10pm via cron.
+
+```bash
+# Dry run — fetches RSS + calls Gemini, prints digest, no email or GitHub push
+~/homeserver/venv/bin/python ~/homeserver/scripts/news.py
+
+# Send email only (no GitHub push)
+~/homeserver/venv/bin/python ~/homeserver/scripts/news.py --email-only
+
+# Full run — email + push to portfolio repo
+~/homeserver/venv/bin/python ~/homeserver/scripts/news.py --real
+```
+
+Requires `gemini_api_keys`, `github_token`, `news_recipients`, and `email` in `config/config.py`. Rotates through multiple Gemini API keys on rate limit (429).
 
 ### nsw_campsite.py
 
@@ -91,13 +109,13 @@ Check availability and book NSW National Parks campsites via the rezexpert API a
 
 ```bash
 # Check availability
-~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py check --campground frazer --checkin 2026-09-04 --nights 2
+~/homeserver/venv/bin/python ~/homeserver/scripts/nsw_campsite.py check --campground frazer --checkin 2026-09-04 --nights 2
 
 # Book dry run (gordon — stops before charging the card)
-~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --dry-run
+~/homeserver/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --dry-run
 
 # Book for real (sam identity — charges the card)
-~/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --real
+~/homeserver/venv/bin/python ~/homeserver/scripts/nsw_campsite.py book --campground frazer --checkin 2026-09-04 --nights 2 --sites 2,3,4 --adults 1 --real
 ```
 
 ## Adding a new job
