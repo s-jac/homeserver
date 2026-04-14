@@ -111,7 +111,9 @@ def build_headlines(feeds: list) -> str:
 SYSTEM_PROMPT = """You are a news editor writing a concise daily digest for a general audience.
 You will receive today's top headlines from several RSS feeds for a single topic.
 Write exactly 3 bullet points summarising the 3 most important stories.
-Each bullet should be 1-2 sentences. Be clear, factual, and neutral in tone."""
+Each bullet should be 1-2 sentences. Be clear, factual, and neutral in tone.
+Ignore any sports stories entirely — do not include them in your bullets.
+The heading field must be set to exactly the topic name provided, nothing else."""
 
 GEMINI_CONFIG = types.GenerateContentConfig(
     system_instruction=SYSTEM_PROMPT,
@@ -234,6 +236,8 @@ def main():
         headlines = build_headlines(feeds)
         log.info(f"Calling Gemini for {topic}")
         topic_digest, key_index = call_gemini(topic, headlines, key_index)
+        for section in topic_digest.sections:
+            section.heading = topic
         all_sections.extend(topic_digest.sections)
 
     digest = NewsDigest(sections=all_sections)
