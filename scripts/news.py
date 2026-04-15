@@ -20,6 +20,7 @@ import json
 import logging
 import smtplib
 import sys
+import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from email.message import EmailMessage
@@ -42,7 +43,6 @@ PORTFOLIO_DATA_PATH = "_data/news.json"
 
 SOURCE_URLS = {
     "BBC World":       "https://www.bbc.com/news/world",
-    "AP News":         "https://apnews.com",
     "The Guardian":    "https://www.theguardian.com",
     "MarketWatch":     "https://www.marketwatch.com",
     "ABC News":        "https://www.abc.net.au/news",
@@ -57,7 +57,6 @@ SOURCE_URLS = {
 RSS_FEED_GROUPS = [
     ("World", [
         ("BBC World",     "https://feeds.bbci.co.uk/news/world/rss.xml"),
-        ("AP News",       "https://rsshub.app/apnews/topics/apf-topnews"),
         ("The Guardian",  "https://www.theguardian.com/world/rss"),
         ("MarketWatch",   "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadlines"),
     ]),
@@ -182,24 +181,30 @@ def call_gemini(topic: str, headlines: str, key_index: int = 0) -> tuple[NewsDig
     api_keys = cfg.gemini_api_keys
     for i in range(key_index, len(api_keys)):
         client = genai.Client(api_key=api_keys[i])
-        try:
-            response = client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=headlines,
-                config=GEMINI_CONFIG,
-            )
-            if response.parsed is None:
-                log.error(f"Gemini returned unparseable response for {topic}: {response.text[:500]}")
-                raise ValueError(f"Gemini response could not be parsed into NewsDigest for topic: {topic}")
-            return response.parsed, i
-        except (genai_errors.ClientError, ResourceExhausted) as e:
-            if '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e):
-                if i + 1 < len(api_keys):
-                    log.warning(f"Rate limited on {topic} (key {i}), switching to next key")
+        for attempt in range(100):
+            try:
+                response = client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=headlines,
+                    config=GEMINI_CONFIG,
+                )
+                if response.parsed is None:
+                    log.error(f"Gemini returned unparseable response for {topic}: {response.text[:500]}")
+                    raise ValueError(f"Gemini response could not be parsed into NewsDigest for topic: {topic}")
+                return response.parsed, i
+            except (genai_errors.ClientError, ResourceExhausted) as e:
+                if '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e):
+                    if i + 1 < len(api_keys):
+                        log.warning(f"Rate limited on {topic} (key {i}), switching to next key")
+                        break  # move to next key
+                    else:
+                        raise
+                elif '503' in str(e) or 'unavailable' in str(e).lower():
+                    delay = min(2 ** attempt, 60)
+                    log.warning(f"503 on {topic} (attempt {attempt + 1}/100), retrying in {delay}s")
+                    time.sleep(delay)
                 else:
                     raise
-            else:
-                raise
 
 
 # ── Email ─────────────────────────────────────────────────────────────────────
