@@ -12,7 +12,7 @@ A Raspberry Pi (hostname: `jim`, user: `gmac`) running a Flask web app that mana
 
 ## After making changes
 
-Run `bash ~/homeserver/update.sh` to pull, commit, and push. Only commit individually if you need a specific commit message for a significant change.
+Commit and push manually with `git add`, `git commit`, `git push`. Only commit what's relevant — don't bundle unrelated changes.
 
 ---
 
@@ -33,10 +33,11 @@ cron/
   README.md             Setup docs
 scripts/
   gym.py                HIIT booking script
+  news.py               Daily news digest — RSS → Gemini → email + portfolio push
   nsw_campsite.py       NSW NP campsite booking script
   notify.py             Gmail SMTP helper, used by gym.py
 templates/index.html    SPA frontend
-logs/                   GITIGNORED — access.log, error.log, gym.log
+logs/                   GITIGNORED — access.log, error.log, gym.log, news.log, cron.log
 ```
 
 ---
@@ -45,9 +46,12 @@ logs/                   GITIGNORED — access.log, error.log, gym.log
 
 Single file `config/config.py` with top-level names:
 - `auth` — login password, JWT secret, token expiry (used by app.py)
-- `email` — Gmail SMTP for failure notifications (used by notify.py)
+- `email` — Gmail SMTP config (used by notify.py and news.py)
 - `gordon` — fake/test identity dict (default for all scripts)
 - `sam` — real identity dict (used when `--real` is passed)
+- `gemini_api_keys` — list of Gemini API keys (used by news.py; rotates on 429)
+- `github_token` — GitHub PAT for pushing to portfolio repo and committing crontab backups
+- `news_recipients` — list of email addresses to send the daily digest to
 
 Both `gordon` and `sam` have the same fields: `first_name`, `last_name`, `email`, `mobile`, `password`, `phone`, `address`, `city`, `state`, `postcode`, `vehicle_rego`, `vehicle_state`, `card_number`, `card_expiry_month`, `card_expiry_year`, `card_cvv`, `card_name`.
 
@@ -101,9 +105,22 @@ Both gym jobs are currently **disabled** (`"enabled": false`). Enable from the U
 
 ---
 
+## news.py
+
+- Fetches RSS feeds grouped by topic (World, Australia, Economics)
+- Calls Gemini (`gemini-2.5-flash`) once per topic group; rotates through `cfg.gemini_api_keys` on rate limit
+- Emails a formatted digest via `cfg.email` to `cfg.news_recipients`
+- Pushes `_data/news.json` to the portfolio repo (`s-jac/s-jac.github.io`) via GitHub API using `cfg.github_token`
+- Dry run (no args): fetches + summarises + prints, no email or push
+- `--email-only`: sends email, no GitHub push
+- `--real`: email + GitHub push
+- Runs daily at 22:00 via cron
+
+---
+
 ## notify.py
 
-Imports `config.email`. Silently returns if `email["enabled"]` is false or `app_password` is empty. Used only by `gym.py`.
+Imports `config.email`. Silently returns if `email["enabled"]` is false or `app_password` is empty. Used only by `gym.py` (news.py has its own `send_email` function).
 
 ---
 

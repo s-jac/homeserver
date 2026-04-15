@@ -6,7 +6,7 @@ Fetches top headlines from RSS feeds, summarises with Gemini,
 emails the digest, and pushes _data/news.json to the portfolio repo.
 
 Cron (add with: crontab -e):
-  0 20 * * * ~/venv/bin/python ~/homeserver/scripts/news.py --real >> ~/homeserver/logs/news.log 2>&1
+  0 22 * * * ~/homeserver/venv/bin/python ~/homeserver/scripts/news.py --real >> ~/homeserver/logs/news.log 2>&1
 
 Manual:
   python scripts/news.py            # dry run: fetches + prints, no email/push
