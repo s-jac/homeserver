@@ -192,14 +192,14 @@ def call_gemini(topic: str, headlines: str, key_index: int = 0) -> tuple[NewsDig
                     log.error(f"Gemini returned unparseable response for {topic}: {response.text[:500]}")
                     raise ValueError(f"Gemini response could not be parsed into NewsDigest for topic: {topic}")
                 return response.parsed, i
-            except (genai_errors.ClientError, ResourceExhausted) as e:
+            except (genai_errors.ClientError, genai_errors.ServerError, ResourceExhausted) as e:
                 if '429' in str(e) or 'RESOURCE_EXHAUSTED' in str(e):
                     if i + 1 < len(api_keys):
                         log.warning(f"Rate limited on {topic} (key {i}), switching to next key")
                         break  # move to next key
                     else:
                         raise
-                elif '503' in str(e) or 'unavailable' in str(e).lower():
+                elif '503' in str(e) or 'UNAVAILABLE' in str(e):
                     delay = min(2 ** attempt, 60)
                     log.warning(f"503 on {topic} (attempt {attempt + 1}/100), retrying in {delay}s")
                     time.sleep(delay)
