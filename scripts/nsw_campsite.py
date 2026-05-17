@@ -989,7 +989,7 @@ def resolve_campground(key: str) -> dict:
     cg = CAMPGROUNDS.get(key)
     if cg is not None:
         return cg
-    slug = key if key.endswith("-campground") else key + "-campground"
+    slug = name_to_slug(key)
     return discover_campground(slug)
 
 

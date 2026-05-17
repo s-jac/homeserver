@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from typing import List
+from zoneinfo import ZoneInfo
 
 import requests
 from google import genai
@@ -38,6 +39,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "config"))
 import config as cfg
 
 GEMINI_MODEL = "gemini-2.5-flash"
+LOCAL_TIMEZONE = ZoneInfo("Australia/Sydney")
 PORTFOLIO_REPO = "s-jac/s-jac.github.io"
 PORTFOLIO_DATA_PATH = "_data/news.json"
 
@@ -74,6 +76,21 @@ RSS_FEED_GROUPS = [
 ]
 
 MAX_ITEMS_PER_FEED = 8
+
+TOPIC_INSTRUCTIONS = {
+    "World": (
+        "Only include genuinely world or international stories. "
+        "Skip stories that are primarily about Australia or primarily about economics/markets unless they are unmistakably major global stories."
+    ),
+    "Australia": (
+        "Only include stories that are primarily about Australia, Australian institutions, Australian politics, Australian communities, or events happening in Australia. "
+        "If a story is mainly about another country or is better categorised as economics/business, skip it."
+    ),
+    "Economics": (
+        "Only include stories that are primarily about economics, business, markets, policy, trade, inflation, interest rates, companies, or financial conditions. "
+        "If a story is mainly general politics or general world news without a strong economics angle, skip it."
+    ),
+}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -168,16 +185,29 @@ For each bullet, set the source field to the name of the feed it came from (e.g.
 Ignore any sports stories entirely — do not include them in your bullets.
 The heading field must be set to exactly the topic name provided, nothing else."""
 
-GEMINI_CONFIG = types.GenerateContentConfig(
-    system_instruction=SYSTEM_PROMPT,
-    temperature=0.8,
-    max_output_tokens=8000,
-    response_mime_type="application/json",
-    response_schema=NewsDigest,
-    thinking_config=ThinkingConfig(include_thoughts=False, thinking_budget=0),
-)
+def build_gemini_prompt(topic: str, headlines: str, seen_headlines: list[str]) -> str:
+    topic_instruction = TOPIC_INSTRUCTIONS.get(topic, f"Only include stories that are clearly about {topic}.")
+    seen_block = "\n".join(f"- {headline}" for headline in seen_headlines) or "- None yet"
+    return (
+        f"Topic: {topic}\n\n"
+        f"Topic rule: {topic_instruction}\n\n"
+        "Do not repeat any of these headlines since we have already seen them in earlier topic groups:\n"
+        f"{seen_block}\n\n"
+        "If a candidate story does not clearly fit the topic rule above, skip it and move to the next story.\n\n"
+        f"{headlines}"
+    )
 
-def call_gemini(topic: str, headlines: str, key_index: int = 0) -> tuple[NewsDigest, int]:
+
+def call_gemini(topic: str, headlines: str, seen_headlines: list[str], key_index: int = 0) -> tuple[NewsDigest, int]:
+    gemini_config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.8,
+        max_output_tokens=8000,
+        response_mime_type="application/json",
+        response_schema=NewsDigest,
+        thinking_config=ThinkingConfig(include_thoughts=False, thinking_budget=0),
+    )
+    prompt = build_gemini_prompt(topic, headlines, seen_headlines)
     api_keys = cfg.gemini_api_keys
     for i in range(key_index, len(api_keys)):
         client = genai.Client(api_key=api_keys[i])
@@ -185,8 +215,8 @@ def call_gemini(topic: str, headlines: str, key_index: int = 0) -> tuple[NewsDig
             try:
                 response = client.models.generate_content(
                     model=GEMINI_MODEL,
-                    contents=headlines,
-                    config=GEMINI_CONFIG,
+                    contents=prompt,
+                    config=gemini_config,
                 )
                 if response.parsed is None:
                     log.error(f"Gemini returned unparseable response for {topic}: {response.text[:500]}")
@@ -288,17 +318,20 @@ def main():
     )
     args = parser.parse_args()
 
-    today = datetime.now(timezone.utc).strftime("%-d %B %Y")
+    now_local = datetime.now(LOCAL_TIMEZONE)
+    today = now_local.strftime("%-d %B %Y")
 
     all_sections = []
+    seen_headlines = []
     key_index = 0
     for topic, feeds in RSS_FEED_GROUPS:
         log.info(f"Fetching RSS feeds for {topic}")
         headlines = build_headlines(feeds)
         log.info(f"Calling Gemini for {topic}")
-        topic_digest, key_index = call_gemini(topic, headlines, key_index)
+        topic_digest, key_index = call_gemini(topic, headlines, seen_headlines, key_index)
         for section in topic_digest.sections:
             section.heading = topic
+            seen_headlines.extend(bullet.text for bullet in section.bullets)
         all_sections.extend(topic_digest.sections)
 
     digest = NewsDigest(sections=all_sections)
