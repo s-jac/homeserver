@@ -30,6 +30,10 @@
     .badge-none { background: #e5e5ea; color: #8e8e93; }
     .run-btn { background: #007aff; color: white; border: none; padding: 7px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; }
     .run-btn:disabled { background: #b0c8f0; cursor: not-allowed; }
+    .job-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .pill-check { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid #d1d1d6; border-radius: 999px; font-size: 12px; color: #3a3a3c; background: #fafafa; cursor: pointer; }
+    .pill-check input { margin: 0; }
+    .mini-select { margin-top: 8px; padding: 6px 8px; border: 1px solid #d1d1d6; border-radius: 8px; background: #fafafa; color: #1c1c1e; font-size: 12px; }
     input[type=password] {
       width: 100%; padding: 10px 12px; border: 1px solid #d1d1d6; border-radius: 10px;
       font-size: 15px; margin-bottom: 10px; background: #fafafa;
@@ -74,6 +78,15 @@
 
 <script>
   const TOKEN_KEY = 'hs_token';
+  const GYM_CLASSES = [
+    { value: 'hiit', label: 'HIIT' },
+    { value: 'cycle', label: 'Cycle' }
+  ];
+  const GYM_IDENTITIES = [
+    { value: 'fake', label: 'Fake' },
+    { value: 'eda', label: 'Eda' },
+    { value: 'sam', label: 'Sam' }
+  ];
 
   function getToken() { return localStorage.getItem(TOKEN_KEY); }
   function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
@@ -125,6 +138,40 @@
     loadJobs();
   }
 
+  function isGymJob(job) {
+    return (job.script || '').endsWith('scripts/gym.py');
+  }
+
+  function gymParams(job) {
+    const params = job.params || {};
+    return {
+      className: params.class || (job.id && job.id.includes('cycle') ? 'cycle' : 'hiit'),
+      identities: Array.isArray(params.identities) ? params.identities : (params.identity ? [params.identity] : ['fake'])
+    };
+  }
+
+  function gymControls(job) {
+    if (!isGymJob(job)) return '';
+    const params = gymParams(job);
+    const classOptions = GYM_CLASSES.map(c =>
+      `<option value="${c.value}" ${params.className === c.value ? 'selected' : ''}>${c.label}</option>`
+    ).join('');
+    const identityPills = GYM_IDENTITIES.map(identity => `
+      <label class="pill-check">
+        <input type="checkbox"
+          ${params.identities.includes(identity.value) ? 'checked' : ''}
+          onchange="updateGymIdentity('${job.id}', '${identity.value}', this.checked)">
+        ${identity.label}
+      </label>
+    `).join('');
+    return `
+      <select class="mini-select" onchange="updateGymClass('${job.id}', this.value)">
+        ${classOptions}
+      </select>
+      <div class="job-controls">${identityPills}</div>
+    `;
+  }
+
   async function loadJobs() {
     const data = await api('GET', '/api/jobs');
     if (!data) return;
@@ -141,6 +188,7 @@
         <div style="flex:1; margin-right:12px;">
           <div class="label">${job.name}</div>
           <div class="sub">${job.description}</div>
+          ${gymControls(job)}
           <div style="margin-top:6px; display:flex; gap:8px; align-items:center;">
             ${statusBadge}
             <span style="font-size:12px; color:#8e8e93;">${lastRun}</span>
@@ -161,6 +209,25 @@
 
   async function toggleJob(id, enabled) {
     await api('PATCH', `/api/jobs/${id}`, { enabled });
+  }
+
+  async function updateGymClass(id, className) {
+    await api('PATCH', `/api/jobs/${id}`, { params: { class: className } });
+    loadJobs();
+  }
+
+  async function updateGymIdentity(id, identity, checked) {
+    const data = await api('GET', '/api/jobs');
+    if (!data) return;
+    const job = data.jobs.find(j => j.id === id);
+    if (!job) return;
+    const params = gymParams(job);
+    const identities = new Set(params.identities);
+    if (checked) identities.add(identity);
+    else identities.delete(identity);
+    if (!identities.size) identities.add('fake');
+    await api('PATCH', `/api/jobs/${id}`, { params: { identities: Array.from(identities) } });
+    loadJobs();
   }
 
   async function runJob(id) {

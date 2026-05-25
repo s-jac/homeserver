@@ -57,11 +57,11 @@ sudo cp "$HOME/homeserver/logrotate.conf" /etc/logrotate.d/homeserver
 
 # ── Crontab ────────────────────────────────────────────────────────────────────
 info "Configuring crontab..."
-CRON_SAT='30 0 * * SAT $HOME/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1'
-CRON_MON='30 0 * * MON $HOME/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1'
+CRON_SAT='1 0 * * SAT $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1'
+CRON_MON='1 0 * * MON $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1'
 (
     crontab -l 2>/dev/null | grep -v 'gym.py' || true
-    echo "# Gym class bookings — 3 days before 7am class"
+    echo "# Gym class bookings — 3 days before class"
     echo "$CRON_SAT"
     echo "$CRON_MON"
 ) | crontab -

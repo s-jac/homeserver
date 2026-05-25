@@ -14,6 +14,11 @@ from pathlib import Path
 HOMESERVER_DIR = Path("~/homeserver").expanduser()
 CRONTAB_FILE = HOMESERVER_DIR / "crontab.txt"
 REPO = "s-jac/homeserver"
+GYM_CRON_COMMENT = "# Gym class bookings — 3 days before class"
+GYM_CRON_LINES = [
+    "1 0 * * SAT $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1",
+    "1 0 * * MON $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1",
+]
 
 
 def load_github_token():
@@ -100,6 +105,15 @@ def cmd_install(args):
     result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
     print(result.stdout.strip())
 
+    missing_gym_lines = [line for line in GYM_CRON_LINES if line not in result.stdout]
+    if missing_gym_lines:
+        print()
+        print("Note: expected gym booking cron lines are missing.")
+        print("Add/update them with:")
+        print(f"  {GYM_CRON_COMMENT}")
+        for line in missing_gym_lines:
+            print(f"  {line}")
+
     # Remind user to add the self-backup cron job if it's not present
     if "cron.py" not in result.stdout:
         print()
@@ -124,6 +138,10 @@ commands:
 
 self-backup cron job (add once, then it maintains itself):
   0 18 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/cron.py backup >> $HOME/homeserver/logs/cron.log 2>&1
+
+gym booking cron jobs:
+  1 0 * * SAT $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
+  1 0 * * MON $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
 
 examples:
   python cron.py backup          # run a backup now

@@ -23,8 +23,9 @@ app.py                  Flask web app
 gunicorn.conf.py        Gunicorn config — logs to logs/, binds 0.0.0.0:5000
 homeserver.service      Systemd unit (copy to /etc/systemd/system/ after edits)
 config/
-  config.py             GITIGNORED — all secrets live here (auth, email, gordon, sam)
+  config.py             GITIGNORED — all secrets live here (auth, email, gordon, eda, sam)
   config.sample.py      Template — update this when adding new config keys
+  jobs.sample.json      Template for live jobs.json shape
   jobs.json             GITIGNORED — live job state (last_run, enabled, etc)
 cron/
   pull.py               Hourly git pull + restarts homeserver service if app.py changed
@@ -32,7 +33,7 @@ cron/
   crontab.txt           Latest crontab snapshot (committed, auto-updated daily)
   README.md             Setup docs
 scripts/
-  gym.py                HIIT booking script
+  gym.py                Gym class booking script
   news.py               Daily news digest — RSS → Gemini → email + portfolio push
   nsw_campsite.py       NSW NP campsite booking script
   notify.py             Gmail SMTP helper, used by gym.py
@@ -48,12 +49,13 @@ Single file `config/config.py` with top-level names:
 - `auth` — login password, JWT secret, token expiry (used by app.py)
 - `email` — Gmail SMTP config (used by notify.py and news.py)
 - `gordon` — fake/test identity dict (default for all scripts)
-- `sam` — real identity dict (used when `--real` is passed)
+- `eda` — real gym identity dict (used when selected in UI or passed with `--identity eda`)
+- `sam` — real identity dict (used when `--real` is passed or selected in UI)
 - `gemini_api_keys` — list of Gemini API keys (used by news.py; rotates on 429)
 - `github_token` — GitHub PAT for pushing to portfolio repo and committing crontab backups
 - `news_recipients` — list of email addresses to send the daily digest to
 
-Both `gordon` and `sam` have the same fields: `first_name`, `last_name`, `email`, `mobile`, `password`, `phone`, `address`, `city`, `state`, `postcode`, `vehicle_rego`, `vehicle_state`, `card_number`, `card_expiry_month`, `card_expiry_year`, `card_cvv`, `card_name`.
+`gordon`, `eda`, and `sam` have the same fields: `first_name`, `last_name`, `email`, `mobile`, `password`, `phone`, `address`, `city`, `state`, `postcode`, `vehicle_rego`, `vehicle_state`, `card_number`, `card_expiry_month`, `card_expiry_year`, `card_cvv`, `card_name`.
 
 **Never print or log the full contents of config.py.** It contains live passwords and card details.
 
@@ -83,16 +85,18 @@ After changes to app.py: `sudo systemctl restart homeserver`.
 
 `config/jobs.json` is **live state** — it is written by both `app.py` (on manual runs) and `gym.py` (on cron runs). Always read it fresh before writing. Script paths use relative form `"scripts/gym.py"` (relative to homeserver root).
 
-Both gym jobs are currently **disabled** (`"enabled": false`). Enable from the UI or edit directly.
+Gym jobs are currently **disabled** (`"enabled": false`). Enable from the UI or edit directly.
 
 ---
 
 ## gym.py
 
-- Imports identity from `config.py` (`gordon` by default, `sam` with `--real`)
+- Imports identities from `config.py` (`fake`/`gordon` by default, `sam` with `--real`, or any repeated `--identity fake|eda|sam`)
+- Supports `--class hiit` (7:00am Tuesday/Thursday) and `--class cycle` (5:45am Tuesday)
 - Reads job state from `config/jobs.json`, writes status back after each run
-- Saves HTML booking responses to `logs/booking_response_<date>.html` (keeps last 10)
-- On failure: calls `notify.send_notification()` only on `--real` runs
+- Gym job params are `{"class": "hiit"|"cycle", "identities": ["fake", "eda", "sam"]}`
+- Saves HTML booking responses to `logs/booking_response_<date>_<class>_<name>.html` (keeps last 10)
+- On failure: calls `notify.send_notification()` for real identities (`eda`/`sam`) or `--fail`
 
 ---
 
@@ -142,8 +146,8 @@ sudo systemctl restart homeserver
 ## Cron
 
 ```
-30 0 * * SAT  $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
-30 0 * * MON  $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
+1 0 * * SAT   $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
+1 0 * * MON   $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/gym.py >> $HOME/homeserver/logs/gym.log 2>&1
 0 22 * * *    $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/news.py --real >> $HOME/homeserver/logs/news.log 2>&1
 0  * * * *    $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/pull.py >> $HOME/homeserver/logs/cron.log 2>&1
 0 18 * * *    $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/cron.py backup >> $HOME/homeserver/logs/cron.log 2>&1
@@ -177,8 +181,8 @@ Config source of truth: `~/homeserver/logrotate.conf` (installed to `/etc/logrot
 
 - **config.py and jobs.json are gitignored** — never try to `git add` them
 - **jobs.json is live state** — both app.py and gym.py write to it; don't overwrite casually
-- **Both gym jobs are disabled by default** — cron runs but the script exits early
-- **Scripts default to gordon (fake identity)** — must pass `--real` to actually book/charge
+- **Gym jobs are disabled by default** — cron runs but the script exits early when no enabled gym jobs match
+- **Gym scripts default to gordon/fake** — select `eda`/`sam` in the UI or pass `--identity`/`--real` for real bookings
 - **The homeserver must be restarted** after `app.py` changes to take effect
 - **systemd doesn't expand `~`** — the service file uses `/home/gmac/` explicitly
 - **config.sample.py is committed** — it has no secrets and documents all keys

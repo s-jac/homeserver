@@ -1,0 +1,49 @@
+{
+  "jobs": [
+    {
+      "id": "gym_tuesday_7am",
+      "name": "Gym: Tuesday HIIT",
+      "description": "Books Tuesday 7:00am HIIT, 3 days ahead at 12:01am AEST.",
+      "script": "scripts/gym.py",
+      "cron": "1 0 * * SAT",
+      "enabled": false,
+      "params": {
+        "class": "hiit",
+        "identities": ["fake"]
+      },
+      "last_run": null,
+      "last_status": null,
+      "last_message": null
+    },
+    {
+      "id": "gym_thursday_7am",
+      "name": "Gym: Thursday HIIT",
+      "description": "Books Thursday 7:00am HIIT, 3 days ahead at 12:01am AEST.",
+      "script": "scripts/gym.py",
+      "cron": "1 0 * * MON",
+      "enabled": false,
+      "params": {
+        "class": "hiit",
+        "identities": ["fake"]
+      },
+      "last_run": null,
+      "last_status": null,
+      "last_message": null
+    },
+    {
+      "id": "gym_tuesday_cycle_545am",
+      "name": "Gym: Tuesday Cycle",
+      "description": "Books Tuesday 5:45am Cycle, 3 days ahead at 12:01am AEST.",
+      "script": "scripts/gym.py",
+      "cron": "1 0 * * SAT",
+      "enabled": false,
+      "params": {
+        "class": "cycle",
+        "identities": ["fake"]
+      },
+      "last_run": null,
+      "last_status": null,
+      "last_message": null
+    }
+  ]
+}

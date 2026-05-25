@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-Manly Aquatic Centre - HIIT Class Auto-Booker
+Manly Aquatic Centre - Class Auto-Booker
 
 Flow:
   1. GET widget          → session cookies + CSRF token
-  2. POST step1          → select HIIT service
+  2. POST step1          → select service
   3. GET step2/step3     → navigate (maintains session state)
-  4. POST timeslots AJAX → get available slots for target date, find 7am slot ID
-  5. POST schedule AJAX  → select the 7am slot
+  4. POST timeslots AJAX → get available slots for target date, find target slot ID
+  5. POST schedule AJAX  → select the target slot
   6. POST step4          → confirm with personal details
 
 Cron schedule:
-  30 0 * * SAT  → Saturday 00:30, books Tuesday  (3 days ahead)
-  30 0 * * MON  → Monday  00:30, books Thursday (3 days ahead)
+  1 0 * * SAT  → Saturday 00:01, books Tuesday  (3 days ahead)
+  1 0 * * MON  → Monday  00:01, books Thursday (3 days ahead)
 
 Manual run:
   # Dry run with gordon (test identity) — skips final booking POST
   python scripts/gym.py --date 2026-04-01 --dry-run
 
-  # Real run with sam credentials
-  python scripts/gym.py --date 2026-04-01 --real
+  # Real run with sam and eda credentials
+  python scripts/gym.py --date 2026-04-01 --identity sam --identity eda
 """
 
 import argparse
@@ -46,18 +46,34 @@ LOGS_DIR      = BASE_DIR / "logs"
 BASE_URL       = "https://app.nabooki.com"
 TOKEN          = "5fade28f6f4d07.93412102"
 WIDGET_TOKEN   = "aHR0cHM6Ly9hcHAubmFib29raS5jb20vYm9va2luZy9zdGVwMT90b2tlbj01ZmFkZTI4ZjZmNGQwNy45MzQxMjEwMg=="
-SERVICE_ID     = "221273"
 LOCATION_ID    = "42841"
 BUSINESS_ID    = "42400"
 RESOURCE_IDS   = ["63942", "64112", "66093", "66380", "66381", "66382"]
-TARGET_TIME    = "7:00"   # matched against timeslot time strings
+
+GYM_CLASSES = {
+    "hiit": {
+        "label": "HIIT",
+        "service_id": "221273",
+        "target_time": "7:00",
+        "job_ids": {1: "gym_tuesday_7am", 3: "gym_thursday_7am"},
+    },
+    "cycle": {
+        "label": "Cycle",
+        "service_id": "220774",
+        "target_time": "5:45",
+        "job_ids": {1: "gym_tuesday_cycle_545am"},
+    },
+}
+DEFAULT_CLASS = "hiit"
+DEFAULT_IDENTITIES = ["fake"]
+IDENTITY_ALIASES = {"fake": "gordon", "gordon": "gordon", "sam": "sam", "eda": "eda"}
 
 # All service IDs listed on the step1 form (for the number_of_people fields)
 ALL_SERVICE_IDS = ["220774", "221305", "220773", "221273",
                    "220775", "221276", "258839", "220776", "221459", "221277"]
 
 SYDNEY_TZ  = pytz.timezone("Australia/Sydney")
-WEEKDAY_JOB = {1: "gym_tuesday_7am", 3: "gym_thursday_7am"}
+WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
 BROWSER_HEADERS = {
     "User-Agent": (
@@ -113,29 +129,126 @@ def find_slot_id(data, target_time: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def load_gym_creds(real: bool) -> dict:
-    identity = cfg.sam if real else cfg.gordon
+def normalize_identity(name: str) -> str:
+    key = name.strip().lower()
+    if key not in IDENTITY_ALIASES:
+        raise ValueError(f"Unknown gym identity {name!r}. Use one of: fake, eda, sam")
+    return IDENTITY_ALIASES[key]
+
+
+def display_identity(name: str) -> str:
+    return "fake" if name == "gordon" else name
+
+
+def load_gym_creds(identity_name: str) -> dict:
+    identity_name = normalize_identity(identity_name)
+    if not hasattr(cfg, identity_name):
+        raise ValueError(f"Missing gym identity in config.py: {identity_name}")
+    identity = getattr(cfg, identity_name)
     creds = {k: identity.get(k, "") for k in ("first_name", "last_name", "email", "mobile")}
     missing = [k for k, v in creds.items() if not v]
     if missing:
-        raise ValueError(f"Missing gym credentials in config.py ({('sam' if real else 'gordon')}): {missing}")
+        raise ValueError(f"Missing gym credentials in config.py ({identity_name}): {missing}")
     return creds
 
 
-def target_date() -> tuple[str | None, str | None]:
+def target_date() -> str | None:
     today = datetime.now(SYDNEY_TZ).date()
     target = today + timedelta(days=3)
-    job_id = WEEKDAY_JOB.get(target.weekday())
-    if job_id:
-        return target.strftime("%Y-%m-%d"), job_id
-    return None, None
+    if any(target.weekday() in gym_class["job_ids"] for gym_class in GYM_CLASSES.values()):
+        return target.strftime("%Y-%m-%d")
+    return None
+
+
+def infer_job_id(date_str: str, class_key: str) -> str | None:
+    d = date_type.fromisoformat(date_str)
+    return GYM_CLASSES[class_key]["job_ids"].get(d.weekday())
+
+
+def job_weekday(job: dict, class_key: str) -> int | None:
+    for gym_class in GYM_CLASSES.values():
+        for weekday, job_id in gym_class["job_ids"].items():
+            if job.get("id") == job_id:
+                return weekday
+    d = job.get("cron", "").split()
+    if len(d) >= 5:
+        cron_day = d[4].upper()
+        return {"MON": 0, "TUE": 1, "WED": 2, "THU": 3, "FRI": 4, "SAT": 5, "SUN": 6}.get(cron_day)
+    return next(iter(GYM_CLASSES[class_key]["job_ids"]), None)
+
+
+def load_jobs_data() -> dict:
+    with open(JOBS_FILE) as f:
+        return json.load(f)
 
 
 def is_job_enabled(job_id: str) -> bool:
-    with open(JOBS_FILE) as f:
-        data = json.load(f)
+    data = load_jobs_data()
     job = next((j for j in data["jobs"] if j["id"] == job_id), None)
     return bool(job and job.get("enabled"))
+
+
+def normalize_identities(values) -> list[str]:
+    if not values:
+        values = DEFAULT_IDENTITIES
+    if isinstance(values, str):
+        values = [v.strip() for v in values.split(",")]
+    identities = []
+    for value in values:
+        if not value:
+            continue
+        normalized = normalize_identity(value)
+        if normalized not in identities:
+            identities.append(normalized)
+    return identities or [normalize_identity(v) for v in DEFAULT_IDENTITIES]
+
+
+def normalize_class(value) -> str:
+    class_key = (value or DEFAULT_CLASS).strip().lower()
+    if class_key not in GYM_CLASSES:
+        raise ValueError(f"Unknown gym class {value!r}. Use one of: {', '.join(GYM_CLASSES)}")
+    return class_key
+
+
+def job_class(job: dict) -> str:
+    params = job.get("params") or {}
+    if params.get("class"):
+        return normalize_class(params["class"])
+    for class_key, gym_class in GYM_CLASSES.items():
+        if job.get("id") in gym_class["job_ids"].values():
+            return class_key
+    return DEFAULT_CLASS
+
+
+def job_identities(job: dict) -> list[str]:
+    params = job.get("params") or {}
+    if "identities" in params:
+        return normalize_identities(params["identities"])
+    if "identity" in params:
+        return normalize_identities(params["identity"])
+    if params.get("real"):
+        return ["sam"]
+    return [normalize_identity(v) for v in DEFAULT_IDENTITIES]
+
+
+def due_jobs(date_str: str) -> list[dict]:
+    data = load_jobs_data()
+    target_weekday = date_type.fromisoformat(date_str).weekday()
+    due = []
+    for job in data.get("jobs", []):
+        if not job.get("enabled"):
+            continue
+        if not str(job.get("script", "")).endswith("scripts/gym.py"):
+            continue
+        class_key = job_class(job)
+        if target_weekday in GYM_CLASSES[class_key]["job_ids"] and job_weekday(job, class_key) == target_weekday:
+            due.append(job)
+    return due
+
+
+def load_job(job_id: str) -> dict | None:
+    data = load_jobs_data()
+    return next((j for j in data.get("jobs", []) if j.get("id") == job_id), None)
 
 
 def update_job_status(job_id: str, status: str, message: str):
@@ -155,10 +268,14 @@ def update_job_status(job_id: str, status: str, message: str):
 
 # ── Booking flow ──────────────────────────────────────────────────────────────
 
-def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
+def book(date_str: str, class_key: str, creds: dict, dry_run: bool = False) -> bool:
+    gym_class = GYM_CLASSES[class_key]
+    service_id = gym_class["service_id"]
+    target_time = gym_class["target_time"]
     mobile_masked = creds["mobile"][:4] + "****" + creds["mobile"][-2:]
     log.info(
-        f"  Booking as: {creds['first_name']} {creds['last_name']} "
+        f"  Booking {gym_class['label']} at {target_time} as: "
+        f"{creds['first_name']} {creds['last_name']} "
         f"<{creds['email']}> mob {mobile_masked}"
     )
 
@@ -173,14 +290,14 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
     csrf = extract_csrf(r.text)
     log.info(f"  Session established, CSRF: {csrf[:12]}…")
 
-    # ── 2. POST step1 → select HIIT service ──────────────────────────────────
-    log.info("Selecting HIIT service (step1)…")
+    # ── 2. POST step1 → select service ───────────────────────────────────────
+    log.info(f"Selecting {gym_class['label']} service (step1)…")
     step1_data = [
         ("_token",                csrf),
         ("token",                 TOKEN),
         ("widget_token",          WIDGET_TOKEN),
         ("validated_promo_code",  ""),
-        ("service_ids",           f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}"),
+        ("service_ids",           f"location_{LOCATION_ID}_category_0_service_{service_id}"),
         ("is_schedule_service",   "yes"),
         ("no_service_error",      ""),
     ]
@@ -223,7 +340,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
     log.info(f"Fetching timeslots for {date_str}…")
     timeslot_payload = [
         ("location_id",          LOCATION_ID),
-        ("service_id",           SERVICE_ID),
+        ("service_id",           service_id),
         ("timezone",             "Australia/Sydney"),
         ("number_of_people",     "1"),
         ("modified_booking_id",  ""),
@@ -254,10 +371,10 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         log.error(f"Unexpected non-JSON timeslots response: {r.text[:300]}")
         return False
 
-    slot_id, resource_id = find_slot_id(timeslots, TARGET_TIME)
+    slot_id, resource_id = find_slot_id(timeslots, target_time)
     if not slot_id:
         log.error(
-            f"Could not find {TARGET_TIME} slot. "
+            f"Could not find {target_time} slot. "
             f"Full timeslots response: {json.dumps(timeslots)}"
         )
         return False
@@ -274,7 +391,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
             "resources_selected":               resource_id,
             "schedule_or_finetune_selected":    "schedule",
             "schedule_or_finetune_id_selected": slot_id,
-            "service_id":                       SERVICE_ID,
+            "service_id":                       service_id,
             "number_of_people":                 "1",
         },
         headers=ajax_headers,
@@ -293,7 +410,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
             "token":                            TOKEN,
             "widget_token":                     WIDGET_TOKEN,
             "validated_promo_code":             "",
-            "original_service_id":              SERVICE_ID,
+            "original_service_id":              service_id,
             "should_be_added_to_waitlist":      "false",
             "multiple_sessions":                "no",
             "max_number_of_sessions":           "1",
@@ -305,8 +422,8 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
             "resource_invisible":               "true",
             "availability_only":                "no",
             "is_booking_request":               "no",
-            "service_ids":                      f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}",
-            "timeslot_selected":                TARGET_TIME,
+            "service_ids":                      f"location_{LOCATION_ID}_category_0_service_{service_id}",
+            "timeslot_selected":                target_time,
             "schedule_or_finetune_id_selected": slot_id,
             "schedule_or_finetune_selected":    "schedule",
             "time_end_selected":                "",
@@ -345,7 +462,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
         log.info(
             f"DRY RUN — would POST step4 to confirm booking for "
             f"{creds['first_name']} {creds['last_name']} <{creds['email']}> "
-            f"on {date_str} at {TARGET_TIME}. Stopping here."
+            f"on {date_str} at {target_time}. Stopping here."
         )
         return True
 
@@ -359,7 +476,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
             "business_id":               BUSINESS_ID,
             "widget_token":              WIDGET_TOKEN,
             "validated_promo_code":      "",
-            "service_ids":               f"location_{LOCATION_ID}_category_0_service_{SERVICE_ID}",
+            "service_ids":               f"location_{LOCATION_ID}_category_0_service_{service_id}",
             "number_of_people_selected": "1",
             "require_customer_payment":  "",
             "first_name":                creds["first_name"],
@@ -378,7 +495,8 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
 
     # Save the full step4 response for manual verification, keep last 10 only
     LOGS_DIR.mkdir(exist_ok=True)
-    response_log = LOGS_DIR / f"booking_response_{date_str}.html"
+    response_slug = re.sub(r"[^a-z0-9]+", "_", f"{class_key}_{creds['first_name']}_{creds['last_name']}".lower()).strip("_")
+    response_log = LOGS_DIR / f"booking_response_{date_str}_{response_slug}.html"
     response_log.write_text(r.text)
     log.info(f"  Step4 response saved to {response_log}")
     old_responses = sorted(LOGS_DIR.glob("booking_response_*.html"))[:-10]
@@ -413,7 +531,7 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
     if matched:
         idx = content.find(matched)
         snippet = body_no_scripts[max(0, idx - 80):idx + 200].replace("\n", " ").strip()
-        log.info(f"Booking CONFIRMED for {date_str} at {TARGET_TIME}")
+        log.info(f"Booking CONFIRMED for {date_str} at {target_time}")
         log.info(f"  Matched {matched!r}: …{snippet}…")
         return True
 
@@ -426,54 +544,134 @@ def book(date_str: str, creds: dict, dry_run: bool = False) -> bool:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def run_booking(date_str: str, job_id: str | None, class_key: str, identities: list[str], dry_run: bool, fail: bool) -> bool:
+    gym_class = GYM_CLASSES[class_key]
+    log.info(
+        f"Booking job {job_id or '(manual)'}: {gym_class['label']} "
+        f"{date_str} {gym_class['target_time']} for {', '.join(display_identity(i) for i in identities)}"
+    )
+
+    results = []
+    for identity in identities:
+        try:
+            creds = load_gym_creds(identity)
+        except ValueError as e:
+            msg = str(e)
+            log.error(msg)
+            if job_id:
+                update_job_status(job_id, "error", msg)
+            results.append((identity, False, msg))
+            continue
+
+        log.info(f"  Using {display_identity(identity)} identity")
+        if fail:
+            log.info("--fail flag set, simulating booking failure for notification test.")
+            success = False
+        else:
+            success = book(date_str, class_key, creds, dry_run=dry_run)
+
+        message = (
+            f"Booked {gym_class['label']} {date_str} at {gym_class['target_time']} for {display_identity(identity)}"
+            if success
+            else f"Failed to book {gym_class['label']} {date_str} at {gym_class['target_time']} for {display_identity(identity)}"
+        )
+        results.append((identity, success, message))
+
+        if not success and (fail or (identity != "gordon" and not dry_run)):
+            send_notification(
+                f"Gym booking FAILED — {gym_class['label']} {date_str} {gym_class['target_time']}",
+                message,
+            )
+
+    all_success = all(success for _, success, _ in results)
+    if job_id:
+        summary = "; ".join(message for _, _, message in results)
+        update_job_status(job_id, "success" if all_success else "error", summary)
+    return all_success
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Book a gym HIIT class")
+    parser = argparse.ArgumentParser(description="Book a gym class")
     parser.add_argument("--date", help="Override date to book (YYYY-MM-DD). Skips the enabled check.")
+    parser.add_argument("--job-id", help="Run one configured jobs.json gym job. Used by the web UI.")
+    parser.add_argument("--class", dest="class_name", choices=sorted(GYM_CLASSES), default=DEFAULT_CLASS, help="Class to book.")
+    parser.add_argument(
+        "--identity",
+        action="append",
+        choices=sorted(IDENTITY_ALIASES),
+        help="Identity to book for. Can be repeated. Default is fake.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Go through all steps but skip the final confirmation POST.")
-    parser.add_argument("--real", action="store_true", help="Use real (sam) credentials. Default is gordon (test identity).")
+    parser.add_argument("--real", action="store_true", help="Backward-compatible alias for --identity sam.")
     parser.add_argument("--fail", action="store_true", help="Simulate a booking failure to test email notification.")
     args = parser.parse_args()
 
-    if args.date:
-        d = date_type.fromisoformat(args.date)
-        job_id = WEEKDAY_JOB.get(d.weekday())
-        if not job_id:
-            log.error(f"{args.date} is not a Tuesday or Thursday.")
+    if args.job_id:
+        try:
+            job = load_job(args.job_id)
+        except FileNotFoundError:
+            job = None
+        if not job:
+            log.error(f"Job {args.job_id} not found in config/jobs.json.")
             sys.exit(1)
-        date_str = args.date
-        log.info(f"Manual run: booking {date_str} (job: {job_id})")
-    else:
-        date_str, job_id = target_date()
+        class_key = job_class(job)
+        identities = normalize_identities(args.identity or (["sam"] if args.real else job_identities(job)))
+        date_str = args.date or target_date()
         if not date_str:
             log.info("Not a booking day. Exiting.")
             sys.exit(0)
-        if not is_job_enabled(job_id):
-            log.info(f"Job {job_id} is disabled. Skipping.")
+        target_weekday = date_type.fromisoformat(date_str).weekday()
+        if target_weekday not in GYM_CLASSES[class_key]["job_ids"] or job_weekday(job, class_key) != target_weekday:
+            log.info(f"Job {args.job_id} is not due for {date_str}. Exiting.")
             sys.exit(0)
+        success = run_booking(date_str, args.job_id, class_key, identities, args.dry_run, args.fail)
+        sys.exit(0 if success else 1)
+
+    if args.date:
+        class_key = normalize_class(args.class_name)
+        job_id = infer_job_id(args.date, class_key)
+        if not job_id:
+            allowed_days = [WEEKDAY_NAMES[weekday] for weekday in sorted(GYM_CLASSES[class_key]["job_ids"])]
+            log.error(f"{args.date} is not a booking day for {GYM_CLASSES[class_key]['label']} ({', '.join(allowed_days)}).")
+            sys.exit(1)
+        identities = normalize_identities(args.identity or (["sam"] if args.real else None))
+        success = run_booking(args.date, job_id, class_key, identities, args.dry_run, args.fail)
+        sys.exit(0 if success else 1)
+
+    date_str = target_date()
+    if not date_str:
+        log.info("Not a booking day. Exiting.")
+        sys.exit(0)
 
     try:
-        creds = load_gym_creds(real=args.real)
-    except ValueError as e:
-        msg = str(e)
-        log.error(msg)
-        update_job_status(job_id, "error", msg)
-        sys.exit(1)
-    log.info(f"  Using {'sam (real)' if args.real else 'gordon (test)'} identity")
+        jobs = due_jobs(date_str)
+    except FileNotFoundError:
+        class_key = normalize_class(args.class_name)
+        job_id = infer_job_id(date_str, class_key)
+        if not job_id:
+            log.info("Not a booking day. Exiting.")
+            sys.exit(0)
+        identities = normalize_identities(args.identity or (["sam"] if args.real else None))
+        success = run_booking(date_str, job_id, class_key, identities, args.dry_run, args.fail)
+        sys.exit(0 if success else 1)
 
-    if args.fail:
-        log.info("--fail flag set, simulating booking failure for notification test.")
-        success = False
-    else:
-        success = book(date_str, creds, dry_run=args.dry_run)
-    msg = (
-        f"Booked {date_str} at {TARGET_TIME}"
-        if success
-        else f"Failed to book {date_str} at {TARGET_TIME}"
-    )
-    update_job_status(job_id, "success" if success else "error", msg)
-    if not success and (args.fail or (args.real and not args.dry_run)):
-        day_name = "Thurs" if job_id == "gym_thursday_7am" else "Tues"
-        send_notification(f"Gym booking FAILED — {day_name} {date_str} {TARGET_TIME}", msg)
+    if not jobs:
+        log.info(f"No enabled gym jobs for {date_str}. Exiting.")
+        sys.exit(0)
+
+    success = True
+    for job in jobs:
+        try:
+            class_key = job_class(job)
+            identities = job_identities(job)
+        except ValueError as e:
+            msg = str(e)
+            log.error(msg)
+            update_job_status(job["id"], "error", msg)
+            success = False
+            continue
+        success = run_booking(date_str, job["id"], class_key, identities, args.dry_run, args.fail) and success
+
     sys.exit(0 if success else 1)
 
 

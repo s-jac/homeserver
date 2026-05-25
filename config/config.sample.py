@@ -1,8 +1,9 @@
 # config/config.py — copy this file to config.py and fill in your real values.
 #
-# Two identities:
+# Three gym identities:
 #   gordon  — fake/test identity (default). Safe to use for dry-runs and dev.
-#   sam     — real identity. Used when scripts are called with --real.
+#   eda     — real gym identity. Used when selected in the web UI or with --identity eda.
+#   sam     — real identity. Used when selected in the web UI or with --identity sam.
 #
 # App settings (auth, email) are also here. Edit this file directly to change them —
 # they are not editable via the web UI.
@@ -78,6 +79,29 @@ sam = {
     "vehicle_rego": "",
     "vehicle_state": "NSW",
     # Real card details
+    "card_number": "",
+    "card_expiry_month": "",
+    "card_expiry_year": "",
+    "card_cvv": "",
+    "card_name": "",
+}
+
+# ── Eda (real gym identity) ───────────────────────────────────────────────────
+
+eda = {
+    "first_name": "",
+    "last_name": "",
+    "email": "",
+    "mobile": "",
+    # Campsite-specific fields are included to keep identity dicts consistent.
+    "password": "",
+    "phone": "",
+    "address": "",
+    "city": "",
+    "state": "NSW",
+    "postcode": "",
+    "vehicle_rego": "",
+    "vehicle_state": "NSW",
     "card_number": "",
     "card_expiry_month": "",
     "card_expiry_year": "",

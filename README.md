@@ -20,6 +20,7 @@ requirements.txt           Python dependencies
 config/
   config.py                All config (auth, email, identities) — gitignored, populate from config.sample.py
   config.sample.py         Template — copy to config.py and fill in real values
+  jobs.sample.json         Template for gym-capable jobs.json rows
   jobs.json                Job definitions and last-run state — gitignored
 cron/
   pull.py                  Hourly git pull + conditional homeserver restart if app.py changed
@@ -27,7 +28,7 @@ cron/
   crontab.txt              Latest crontab snapshot (auto-updated daily at 4am AEST)
   README.md                Setup and usage docs
 scripts/
-  gym.py                   HIIT class auto-booker (Manly Aquatic Centre)
+  gym.py                   Gym class auto-booker (Manly Aquatic Centre)
   news.py                  Daily news digest — RSS → Gemini summary → email + portfolio push
   nsw_campsite.py          NSW National Parks campsite booking
   notify.py                Gmail SMTP notification helper
@@ -43,7 +44,7 @@ See [homeserver-setup](https://github.com/s-jac/homeserver-setup) — `install.s
 ```bash
 cp ~/homeserver/config/config.sample.py ~/homeserver/config/config.py
 chmod 600 ~/homeserver/config/config.py
-# Fill in config.py — auth, email, and the sam identity dict
+# Fill in config.py — auth, email, and the sam/eda identity dicts
 ```
 
 ## Config
@@ -55,7 +56,8 @@ All config lives in `config/config.py` (gitignored). Top-level names:
 | `auth` | app.py — login password, JWT secret |
 | `email` | notify.py — Gmail SMTP for failure alerts |
 | `gordon` | scripts (default) — safe test identity, fake card details |
-| `sam` | scripts with `--real` — real credentials, charges the card |
+| `eda` | gym.py — real gym identity selected in the UI |
+| `sam` | scripts with `--real` or selected in the UI — real credentials, charges the card |
 
 Edit `config.py` directly to change any settings — the web UI does not persist changes.
 
@@ -66,6 +68,7 @@ Jobs are defined in `config/jobs.json` (gitignored — it holds live state). Eac
 - `script` — path to the script (relative to homeserver root, or absolute)
 - `cron` — schedule shown in the UI (actual cron entry is in the user crontab)
 - `enabled` — toggled from the UI; scripts check this flag and exit early if false
+- `params` — optional script params. Gym jobs use `class` (`hiit` or `cycle`) and `identities` (`fake`, `eda`, `sam`).
 
 The UI at `http://<tailscale-ip>:5000` shows last run time, status, and output per job, and lets you enable/disable or manually trigger runs.
 
@@ -73,17 +76,17 @@ The UI at `http://<tailscale-ip>:5000` shows last run time, status, and output p
 
 ### gym.py
 
-Auto-books 7am HIIT classes at Manly Aquatic Centre (nabooki.com). Runs Saturday 00:30 to book Tuesday, and Monday 00:30 to book Thursday (booking window opens 3 days in advance). Uses the gordon identity by default; pass `--real` to use sam. Sends an email via notify.py on failure (real runs only).
+Auto-books Manly Aquatic Centre classes (nabooki.com). HIIT is 7:00am on Tuesday/Thursday; Cycle is 5:45am on Tuesday. Cron runs Saturday 00:01 to book Tuesday, and Monday 00:01 to book Thursday (booking window opens 3 days in advance). The UI can book any combination of fake, eda, and sam identities.
 
 ```bash
 # Dry run with gordon (test identity, no real booking)
 ~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run
 
-# Dry run with real sam credentials
-~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run --real
+# Dry run with real sam and eda credentials
+~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --dry-run --identity sam --identity eda
 
-# Real run
-~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-01 --real
+# Cycle class
+~/homeserver/venv/bin/python ~/homeserver/scripts/gym.py --date 2026-04-07 --class cycle --identity sam
 ```
 
 ### news.py

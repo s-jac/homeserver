@@ -1,6 +1,5 @@
 import importlib.util
 import json
-import os
 import subprocess
 from datetime import datetime, timezone, timedelta
 from functools import wraps
@@ -31,6 +30,23 @@ def load_jobs():
 def save_jobs(data):
     with open(JOBS_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def job_command(script, job):
+    venv_python = BASE_DIR / "venv" / "bin" / "python"
+    cmd = [str(venv_python), str(script)]
+    if str(job.get("script", "")).endswith("scripts/gym.py"):
+        if job.get("id"):
+            cmd.extend(["--job-id", str(job["id"])])
+        params = job.get("params") or {}
+        if params.get("class"):
+            cmd.extend(["--class", str(params["class"])])
+        identities = params.get("identities")
+        if isinstance(identities, str):
+            identities = [i.strip() for i in identities.split(",") if i.strip()]
+        for identity in identities or []:
+            cmd.extend(["--identity", str(identity)])
+    return cmd
 
 
 def require_auth(f):
@@ -85,7 +101,7 @@ def update_job(job_id):
     if "enabled" in data:
         job["enabled"] = bool(data["enabled"])
     if "params" in data and isinstance(data["params"], dict):
-        job["params"].update(data["params"])
+        job.setdefault("params", {}).update(data["params"])
     save_jobs(jobs_data)
     return jsonify(job)
 
@@ -102,12 +118,8 @@ def run_job(job_id):
         script = BASE_DIR / script
     if not script.exists():
         return jsonify({"error": "Script not found"}), 500
-    venv_python = BASE_DIR / "venv" / "bin" / "python"
     try:
-        result = subprocess.run(
-            [str(venv_python), str(script)],
-            capture_output=True, text=True, timeout=60
-        )
+        result = subprocess.run(job_command(script, job), capture_output=True, text=True, timeout=180)
         status = "success" if result.returncode == 0 else "error"
         message = result.stdout.strip() or result.stderr.strip()
     except subprocess.TimeoutExpired:
