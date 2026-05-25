@@ -67,6 +67,7 @@ GYM_CLASSES = {
 DEFAULT_CLASS = "hiit"
 DEFAULT_IDENTITIES = ["fake"]
 IDENTITY_ALIASES = {"fake": "gordon", "gordon": "gordon", "sam": "sam", "eda": "eda"}
+SUCCESS_EMAIL = "sjac350@gmail.com"
 
 # All service IDs listed on the step1 form (for the number_of_people fields)
 ALL_SERVICE_IDS = ["220774", "221305", "220773", "221273",
@@ -188,7 +189,9 @@ def is_job_enabled(job_id: str) -> bool:
     return bool(job and job.get("enabled"))
 
 
-def normalize_identities(values) -> list[str]:
+def normalize_identities(values, allow_empty: bool = False) -> list[str]:
+    if allow_empty and values == []:
+        return []
     if not values:
         values = DEFAULT_IDENTITIES
     if isinstance(values, str):
@@ -200,7 +203,9 @@ def normalize_identities(values) -> list[str]:
         normalized = normalize_identity(value)
         if normalized not in identities:
             identities.append(normalized)
-    return identities or [normalize_identity(v) for v in DEFAULT_IDENTITIES]
+    if identities or allow_empty:
+        return identities
+    return [normalize_identity(v) for v in DEFAULT_IDENTITIES]
 
 
 def normalize_class(value) -> str:
@@ -223,7 +228,7 @@ def job_class(job: dict) -> str:
 def job_identities(job: dict) -> list[str]:
     params = job.get("params") or {}
     if "identities" in params:
-        return normalize_identities(params["identities"])
+        return normalize_identities(params["identities"], allow_empty=True)
     if "identity" in params:
         return normalize_identities(params["identity"])
     if params.get("real"):
@@ -546,6 +551,13 @@ def book(date_str: str, class_key: str, creds: dict, dry_run: bool = False) -> b
 
 def run_booking(date_str: str, job_id: str | None, class_key: str, identities: list[str], dry_run: bool, fail: bool) -> bool:
     gym_class = GYM_CLASSES[class_key]
+    if not identities:
+        msg = f"No identities selected for {gym_class['label']} {date_str} at {gym_class['target_time']}; skipping."
+        log.info(msg)
+        if job_id:
+            update_job_status(job_id, "success", msg)
+        return True
+
     log.info(
         f"Booking job {job_id or '(manual)'}: {gym_class['label']} "
         f"{date_str} {gym_class['target_time']} for {', '.join(display_identity(i) for i in identities)}"
@@ -587,6 +599,12 @@ def run_booking(date_str: str, job_id: str | None, class_key: str, identities: l
     if job_id:
         summary = "; ".join(message for _, _, message in results)
         update_job_status(job_id, "success" if all_success else "error", summary)
+    if all_success and not dry_run:
+        send_notification(
+            f"Gym booking succeeded — {gym_class['label']} {date_str} {gym_class['target_time']}",
+            "; ".join(message for _, _, message in results),
+            to_address=SUCCESS_EMAIL,
+        )
     return all_success
 
 

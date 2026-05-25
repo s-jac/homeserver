@@ -228,7 +228,6 @@
     const identities = new Set(params.identities);
     if (checked) identities.add(identity);
     else identities.delete(identity);
-    if (!identities.size) identities.add('fake');
     await api('PATCH', `/api/jobs/${id}`, { params: { identities: Array.from(identities) } });
     loadJobs();
   }

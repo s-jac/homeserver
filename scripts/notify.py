@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "config"))
 import config as _cfg
 
 
-def send_notification(subject: str, body: str):
+def send_notification(subject: str, body: str, to_address: str | None = None):
     cfg = _cfg.email
     if not cfg.get("enabled"):
         return
@@ -17,7 +17,7 @@ def send_notification(subject: str, body: str):
     msg = EmailMessage()
     msg["Subject"] = f"[HomeServer] {subject}"
     msg["From"] = cfg["from_address"]
-    msg["To"] = cfg["to_address"]
+    msg["To"] = to_address or cfg["to_address"]
     msg.set_content(body)
 
     with smtplib.SMTP(cfg["smtp_host"], cfg["smtp_port"]) as smtp:
