@@ -4,4 +4,4 @@
 0 7 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/news.py --real >> $HOME/homeserver/logs/news.log 2>&1
 0 18 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/cron.py backup >> $HOME/homeserver/logs/cron.log 2>&1
 0 * * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/pull.py >> $HOME/homeserver/logs/cron.log 2>&1
-0 7,8 * * * [ "$(date -u +\%H\%M)" = 2100 ] && /home/gmac/homeserver/venv/bin/python /home/gmac/homeserver/scripts/machupicchu.py >> /home/gmac/homeserver/logs/machupicchu.log 2>&1
+30 6 * * * /home/gmac/homeserver/venv/bin/python /home/gmac/homeserver/scripts/machupicchu.py >> /home/gmac/homeserver/logs/machupicchu.log 2>&1
