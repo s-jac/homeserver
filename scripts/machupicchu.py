@@ -25,6 +25,9 @@ API_URL = "https://api-tuboleto.cultura.pe"
 BOOKING_URL = "https://tuboleto.cultura.pe/llaqta_machupicchu"
 TARGET_DATE = date(2027, 6, 10)
 TAKEOFF = datetime(2027, 5, 21, 19, 55, tzinfo=ZoneInfo("America/Los_Angeles"))
+VISIT_END = datetime(2027, 6, 11, 0, 0, tzinfo=ZoneInfo("America/Lima"))
+CHARLI_LEFT = datetime(2027, 6, 12, 11, 30, tzinfo=ZoneInfo("America/Los_Angeles"))
+HOLIDAY_END = datetime(2027, 6, 20, 9, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
 STATE_FILE = BASE_DIR / "config" / "machupicchu_alerts.json"
 URGENT_SUBJECT = "TICKETS ARE AVAILABLE FOR MACCU PICCU GO BUY EM!!!!"
 
@@ -129,24 +132,44 @@ def save_ever_available(target, ever_available):
     temp.replace(STATE_FILE)
 
 
-def countdown_subject(now_ns):
-    remaining = max(0, int(TAKEOFF.timestamp()) * 1_000_000_000 - now_ns)
-    days, remaining = divmod(remaining, 86_400_000_000_000)
-    hours, remaining = divmod(remaining, 3_600_000_000_000)
-    minutes, remaining = divmod(remaining, 60_000_000_000)
-    seconds, remaining = divmod(remaining, 1_000_000_000)
-    milliseconds, nanoseconds = divmod(remaining, 1_000_000)
+def epoch_ns(moment):
+    return int(moment.timestamp()) * 1_000_000_000
+
+
+def format_duration(duration_ns):
+    days, remainder = divmod(duration_ns, 86_400_000_000_000)
+    hours, remainder = divmod(remainder, 3_600_000_000_000)
+    minutes, remainder = divmod(remainder, 60_000_000_000)
+    seconds, remainder = divmod(remainder, 1_000_000_000)
+    milliseconds, nanoseconds = divmod(remainder, 1_000_000)
     return (
-        f"South America Daily - {days} days, {hours} hours, {minutes} minutes, "
-        f"{seconds} seconds, {milliseconds} ms, {nanoseconds} ns until the holiday!"
+        f"{days} days, {hours} hours, {minutes} minutes, "
+        f"{seconds} seconds, {milliseconds} ms, {nanoseconds} ns"
     )
 
 
+def email_subject(now_ns, ever_available):
+    takeoff_ns = epoch_ns(TAKEOFF)
+    charli_left_ns = epoch_ns(CHARLI_LEFT)
+    holiday_end_ns = epoch_ns(HOLIDAY_END)
+    if now_ns < takeoff_ns:
+        if ever_available:
+            return URGENT_SUBJECT
+        return f"South America Daily - {format_duration(takeoff_ns - now_ns)} until the holiday!"
+    if now_ns < charli_left_ns:
+        return f"{format_duration(now_ns - takeoff_ns)} SINCE HOLIDAY STARTED, HAVE YOU BEEN ENJOYING YOURSELF?????"
+    if now_ns < holiday_end_ns:
+        return (
+            f"CHARLI LEFT :((((( WE MISS CHARLI SINCE {format_duration(now_ns - charli_left_ns)}, "
+            f"BUT AT LEAST WE GOT {format_duration(holiday_end_ns - now_ns)} LEFT!!!!!!!!!!"
+        )
+    return f"HOLIDAY OVER :(((((( {format_duration(now_ns - holiday_end_ns)} SINCE HOLIDAY PAST! OH HOW WE MISS IT!"
+
+
 def email_content(now_ns, available, ever_available, responses):
-    if ever_available:
-        subject = URGENT_SUBJECT
-    else:
-        subject = countdown_subject(now_ns)
+    subject = email_subject(now_ns, ever_available)
+    if responses is None:
+        return subject, subject + "\n"
     status = "AVAILABLE" if available else "NOT AVAILABLE"
     body = (
         f"Tickets to Maccu Piccu are currently {status}, but double check here just in case: {BOOKING_URL}, "
@@ -182,18 +205,22 @@ def main():
     parser.add_argument("--dry-run", action="store_true", help="Print the email without sending or saving state")
     args = parser.parse_args()
 
-    server_time = int(api_json("/comunes/tiempo-servidor")["tiempoServidor"])
-    clock_offset = server_time - int(time.time() * 1000)
-    responses = {}
-    for circuit_id, route_id, name in classic_routes():
-        responses[name] = availability_response(circuit_id, route_id, TARGET_DATE, clock_offset)
-    if not any(name.startswith("Ruta 2-A:") for name in responses) or not any(name.startswith("Ruta 2-B:") for name in responses):
-        raise ValueError("The site did not return both Classic routes")
+    responses = None
+    available = False
+    ever_available = load_ever_available(TARGET_DATE)
+    if time.time_ns() < epoch_ns(VISIT_END):
+        server_time = int(api_json("/comunes/tiempo-servidor")["tiempoServidor"])
+        clock_offset = server_time - int(time.time() * 1000)
+        responses = {}
+        for circuit_id, route_id, name in classic_routes():
+            responses[name] = availability_response(circuit_id, route_id, TARGET_DATE, clock_offset)
+        if not any(name.startswith("Ruta 2-A:") for name in responses) or not any(name.startswith("Ruta 2-B:") for name in responses):
+            raise ValueError("The site did not return both Classic routes")
 
-    # Both routes return [] today. Flag any successful, decrypted change as
-    # available so a new response shape cannot silently hide ticket sales.
-    available = any(value != [] for value in responses.values())
-    ever_available = load_ever_available(TARGET_DATE) or available
+        # Both routes return [] today. Flag any successful, decrypted change as
+        # available so a new response shape cannot silently hide ticket sales.
+        available = any(value != [] for value in responses.values())
+        ever_available = ever_available or available
     subject, body = email_content(time.time_ns(), available, ever_available, responses)
     print(f"Subject: {subject}\n\n{body}")
     if args.dry_run:

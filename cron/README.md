@@ -18,7 +18,7 @@ python ~/homeserver/cron/pull.py
 
 ### Machupicchu tickets
 
-`scripts/machupicchu.py` checks the public Tu Boleto calendar for **10 June 2027**, Circuit 2, Routes 2-A and 2-B. It sends a daily South America email to `south_america_recipients` in `config/config.py`, counting down to the 21 May 2027, 7:55pm San Francisco takeoff. The current response for both routes is an empty list; any successful response that differs from it is flagged as available. Once flagged, the urgent subject stays in future daily emails. It does not buy tickets. The alert state is kept in gitignored `config/machupicchu_alerts.json`.
+`scripts/machupicchu.py` checks the public Tu Boleto calendar for **10 June 2027**, Circuit 2, Routes 2-A and 2-B. It sends a daily South America email to `south_america_recipients` in `config/config.py`. Before the 21 May 2027, 7:55pm San Francisco takeoff, its subject counts down to departure; a ticket alert replaces that subject until takeoff. It then counts time since takeoff, time since Charli left on 12 June at 11:30am and time left until 20 June at 9am, then time since the holiday ended. All milestone times use San Francisco time. Ticket checks stop after 10 June in Peru, while the daily emails continue. The current response for both routes is an empty list; any successful response that differs from it is flagged as available. It does not buy tickets. The alert state is kept in gitignored `config/machupicchu_alerts.json`.
 
 The checker uses `openssl` to decode the site's availability response. Verify `openssl` is installed on the Pi or your computer, then preview the email without sending it:
 
@@ -32,14 +32,13 @@ To check and send an email immediately from a computer with `config/config.py` s
 python3 scripts/machupicchu.py
 ```
 
-After the new code is on the Pi, add the daily job to its **live** crontab and run the backup immediately so `crontab.txt` matches. If you previously installed the every-two-hours job, remove that line first:
+The Pi's live crontab already has the daily job. On a fresh device, install the backed-up crontab after configuring the repo:
 
 ```bash
-(crontab -l; echo '0 21 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/machupicchu.py >> $HOME/homeserver/logs/machupicchu.log 2>&1') | crontab -
-~/homeserver/venv/bin/python ~/homeserver/cron/cron.py backup
+~/homeserver/venv/bin/python ~/homeserver/cron/cron.py install
 ```
 
-The Pi's crontab uses UTC, so `0 21` is 8am AEDT or 7am AEST. Email requires `email["enabled"] = True`, a valid Gmail app password, and `south_america_recipients` in `config/config.py`.
+The Pi uses Sydney local time. The live cron entry checks at 7am and 8am, then uses the UTC guard in `crontab.txt` to run only at 21:00 UTC (8am AEDT or 7am AEST). After changing the live crontab, run `cron.py backup` immediately. Email requires `email["enabled"] = True`, a valid Gmail app password, and `south_america_recipients` in `config/config.py`.
 
 ## Usage
 
