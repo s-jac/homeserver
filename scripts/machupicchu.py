@@ -139,13 +139,9 @@ def email_content(today, available, ever_available, responses):
         subject = "South America Daily - The holiday has started!"
     status = "AVAILABLE" if available else "NOT AVAILABLE"
     body = (
-        f"Tickets are {status}, but double check here just in case.\n\n"
-        "Date: 10 June 2027\n\n"
-        "Circuit: 2 – Classic\n\n"
-        "Route: 2-A (2-B as backup)\n\n"
-        "Time: 9 am\n\n"
-        "Tickets: 4\n\n"
-        "Website: tuboleto.cultura.pe\n\n"
+        f"Tickets are {status}, but double check here just in case: {BOOKING_URL}, "
+        "with options 10 June 2027, Circuit 2 – Classic, Route 2-A (2-B as backup), "
+        "9 am, 4 tickets.\n\n"
         "Checker output:\n"
         + "\n".join(f"{name}: {json.dumps(value, ensure_ascii=False)}" for name, value in responses.items())
         + "\n"
