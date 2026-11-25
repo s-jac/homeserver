@@ -4,5 +4,5 @@
 0 7 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/news.py --real >> $HOME/homeserver/logs/news.log 2>&1
 0 18 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/cron.py backup >> $HOME/homeserver/logs/cron.log 2>&1
 0 * * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/cron/pull.py >> $HOME/homeserver/logs/cron.log 2>&1
-# Machupicchu availability for 10 June 2027 — every two hours
-17 */2 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/machupicchu.py >> $HOME/homeserver/logs/machupicchu.log 2>&1
+# South America daily email — 8am AEDT / 7am AEST
+0 21 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/machupicchu.py >> $HOME/homeserver/logs/machupicchu.log 2>&1

@@ -18,22 +18,28 @@ python ~/homeserver/cron/pull.py
 
 ### Machupicchu tickets
 
-`scripts/machupicchu.py` checks the public Tu Boleto calendar for **10 June 2027** across all Machupicchu routes every two hours. When a route first has tickets, it emails the address configured in `config/config.py` via `scripts/notify.py`. It sends another alert if tickets disappear and later return. It does not buy tickets. The alert state is kept in gitignored `config/machupicchu_alerts.json`.
+`scripts/machupicchu.py` checks the public Tu Boleto calendar for **10 June 2027**, Circuit 2, Routes 2-A and 2-B. It sends a daily South America email to `south_america_recipients` in `config/config.py`, counting down to 21 May 2027. The current response for both routes is an empty list; any successful response that differs from it is flagged as available. Once flagged, the urgent subject stays in future daily emails. It does not buy tickets. The alert state is kept in gitignored `config/machupicchu_alerts.json`.
 
-The checker uses `openssl` to decode the site's availability response. Verify `openssl` is installed on the Pi, then test without email:
+The checker uses `openssl` to decode the site's availability response. Verify `openssl` is installed on the Pi or your computer, then preview the email without sending it:
 
 ```bash
 ~/homeserver/venv/bin/python ~/homeserver/scripts/machupicchu.py --dry-run
 ```
 
-After the new code is on the Pi, add the job to its **live** crontab and run the backup immediately so `crontab.txt` matches:
+To check and send an email immediately from a computer with `config/config.py` set up, run from the repo root:
 
 ```bash
-(crontab -l; echo '17 */2 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/machupicchu.py >> $HOME/homeserver/logs/machupicchu.log 2>&1') | crontab -
+python3 scripts/machupicchu.py
+```
+
+After the new code is on the Pi, add the daily job to its **live** crontab and run the backup immediately so `crontab.txt` matches. If you previously installed the every-two-hours job, remove that line first:
+
+```bash
+(crontab -l; echo '0 21 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/machupicchu.py >> $HOME/homeserver/logs/machupicchu.log 2>&1') | crontab -
 ~/homeserver/venv/bin/python ~/homeserver/cron/cron.py backup
 ```
 
-Email requires `email["enabled"] = True` and a valid Gmail app password in `config/config.py`.
+The Pi's crontab uses UTC, so `0 21` is 8am AEDT or 7am AEST. Email requires `email["enabled"] = True`, a valid Gmail app password, and `south_america_recipients` in `config/config.py`.
 
 ## Usage
 

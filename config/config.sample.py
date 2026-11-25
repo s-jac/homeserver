@@ -37,6 +37,9 @@ github_token = ""  # GitHub PAT with contents:write on s-jac/s-jac.github.io
 
 news_recipients = ["you@example.com", "partner@example.com"]
 
+# Daily South America countdown and Machupicchu ticket status
+south_america_recipients = ["you@example.com", "partner@example.com"]
+
 
 # ── Gordon (fake/test identity) ───────────────────────────────────────────────
 

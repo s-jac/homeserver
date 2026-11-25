@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check Tu Boleto for Machupicchu tickets on 10 June 2027.
+"""Send the daily South America email with Machupicchu ticket status.
 
 This uses the same public route/date API as the booking calendar. It never
 starts a purchase or attempts the site's human verification.
@@ -10,18 +10,23 @@ import base64
 import hashlib
 import hmac
 import json
+import smtplib
 import subprocess
 import sys
 import time
-from datetime import date
+from datetime import date, datetime
+from email.message import EmailMessage
 from pathlib import Path
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 API_URL = "https://api-tuboleto.cultura.pe"
 BOOKING_URL = "https://tuboleto.cultura.pe/llaqta_machupicchu"
 TARGET_DATE = date(2027, 6, 10)
+HOLIDAY_DATE = date(2027, 5, 21)
 STATE_FILE = BASE_DIR / "config" / "machupicchu_alerts.json"
+URGENT_SUBJECT = "TICKETS ARE AVAILABLE FOR MACCU PICCU GO BUY EM!!!!"
 
 # These values are published in the Tu Boleto frontend bundle. If its API
 # changes, the checker fails visibly instead of treating an error as no seats.
@@ -64,16 +69,20 @@ def decrypt_data(encoded):
     return json.loads(result.stdout)
 
 
-def routes():
+def classic_routes():
     place = api_json("/visita/public/informacion-lugar?idLugar=llaqta_machupicchu")
     if place.get("nidlugar") != 1 or not place.get("circuitos"):
         raise ValueError("Unexpected Machupicchu route information")
     for circuit in place["circuitos"]:
+        if circuit["nidcircuito"] != 2:
+            continue
         for route in circuit.get("rutas", []):
-            yield circuit["nidcircuito"], route["nidruta"], route["nombre_ruta"]
+            name = route["nombre_ruta"]
+            if name.startswith(("Ruta 2-A:", "Ruta 2-B:")):
+                yield circuit["nidcircuito"], route["nidruta"], name
 
 
-def available_dates(circuit_id, route_id, target, clock_offset):
+def availability_response(circuit_id, route_id, target, clock_offset):
     timestamp = str(int(time.time() * 1000) + clock_offset)
     code = base64.b64encode(
         hmac.new(SIGNING_KEY, SIGNING_KEY + b":" + timestamp.encode(), hashlib.sha256).digest()
@@ -100,77 +109,96 @@ def available_dates(circuit_id, route_id, target, clock_offset):
     )
     if response.get("estado") is not True or not isinstance(response.get("data"), str):
         raise ValueError(f"Availability API rejected route {route_id}: {response.get('mensaje')}")
-    dates = decrypt_data(response["data"])
-    if not isinstance(dates, list) or any(not isinstance(item, dict) or "dfecha" not in item for item in dates):
-        raise ValueError(f"Unexpected availability format for route {route_id}")
-    return dates
+    return decrypt_data(response["data"])
 
 
-def load_notified(target):
+def load_ever_available(target):
     try:
         state = json.loads(STATE_FILE.read_text())
     except FileNotFoundError:
-        return set()
+        return False
     if state.get("date") != target.isoformat():
-        return set()
-    return set(state.get("notified_route_ids", []))
+        return False
+    return state.get("ever_available") is True
 
 
-def save_notified(target, notified):
+def save_ever_available(target, ever_available):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     temp = STATE_FILE.with_suffix(".tmp")
-    temp.write_text(json.dumps({"date": target.isoformat(), "notified_route_ids": sorted(notified)}) + "\n")
+    temp.write_text(json.dumps({"date": target.isoformat(), "ever_available": ever_available}) + "\n")
     temp.replace(STATE_FILE)
+
+
+def email_content(today, available, ever_available, responses):
+    days = (HOLIDAY_DATE - today).days
+    if ever_available:
+        subject = URGENT_SUBJECT
+    elif days >= 0:
+        subject = f"South America Daily - {days} days until the holiday!"
+    else:
+        subject = "South America Daily - The holiday has started!"
+    status = "AVAILABLE" if available else "NOT AVAILABLE"
+    body = (
+        f"Tickets are {status}, but double check here just in case.\n\n"
+        "Date: 10 June 2027\n\n"
+        "Circuit: 2 – Classic\n\n"
+        "Route: 2-A (2-B as backup)\n\n"
+        "Time: 9 am\n\n"
+        "Tickets: 4\n\n"
+        "Website: tuboleto.cultura.pe\n\n"
+        "Checker output:\n"
+        + "\n".join(f"{name}: {json.dumps(value, ensure_ascii=False)}" for name, value in responses.items())
+        + "\n"
+    )
+    return subject, body
+
+
+def send_email(config, subject, body):
+    if not config.email.get("enabled") or not config.email.get("app_password"):
+        raise ValueError("Email is not enabled or has no app password in config/config.py")
+    recipients = getattr(config, "south_america_recipients", None)
+    if not isinstance(recipients, list) or not recipients or any(not isinstance(value, str) or not value for value in recipients):
+        raise ValueError("Set south_america_recipients to a nonempty list in config/config.py")
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = config.email["from_address"]
+    message["To"] = ", ".join(recipients)
+    message.set_content(body)
+    with smtplib.SMTP(config.email["smtp_host"], config.email["smtp_port"], timeout=30) as smtp:
+        smtp.ehlo()
+        smtp.starttls()
+        smtp.login(config.email["username"], config.email["app_password"])
+        smtp.send_message(message)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--date", type=date.fromisoformat, default=TARGET_DATE, help="YYYY-MM-DD")
-    parser.add_argument("--dry-run", action="store_true", help="Print status without email or state changes")
+    parser.add_argument("--dry-run", action="store_true", help="Print the email without sending or saving state")
     args = parser.parse_args()
 
     server_time = int(api_json("/comunes/tiempo-servidor")["tiempoServidor"])
     clock_offset = server_time - int(time.time() * 1000)
-    target = args.date
-    target_label = target.strftime("%-d %B %Y")
-    date_key = target.strftime("%d-%m-%Y")
-    found = {}
-    checked = 0
-    for circuit_id, route_id, name in routes():
-        checked += 1
-        if any(item["dfecha"] == date_key for item in available_dates(circuit_id, route_id, target, clock_offset)):
-            found[route_id] = name
-    if checked == 0:
-        raise ValueError("No Machupicchu routes were returned")
-    print(f"Machupicchu {target_label}: {len(found)} of {checked} routes have tickets")
-    if not found:
-        if not args.dry_run:
-            save_notified(target, set())
-        return
+    responses = {}
+    for circuit_id, route_id, name in classic_routes():
+        responses[name] = availability_response(circuit_id, route_id, TARGET_DATE, clock_offset)
+    if not any(name.startswith("Ruta 2-A:") for name in responses) or not any(name.startswith("Ruta 2-B:") for name in responses):
+        raise ValueError("The site did not return both Classic routes")
 
-    for name in found.values():
-        print(f"  {name}")
+    # Both routes return [] today. Flag any successful, decrypted change as
+    # available so a new response shape cannot silently hide ticket sales.
+    available = any(value != [] for value in responses.values())
+    ever_available = load_ever_available(TARGET_DATE) or available
+    today = datetime.now(ZoneInfo("Australia/Sydney")).date()
+    subject, body = email_content(today, available, ever_available, responses)
+    print(f"Subject: {subject}\n\n{body}")
     if args.dry_run:
         return
+    sys.path.insert(0, str(BASE_DIR / "config"))
+    import config
 
-    previous = load_notified(target)
-    new_routes = set(found) - previous
-    if new_routes:
-        sys.path.insert(0, str(BASE_DIR / "config"))
-        import config
-
-        if not config.email.get("enabled") or not config.email.get("app_password"):
-            print("Email is not configured; availability will be checked again on the next run")
-            return
-        from notify import send_notification
-
-        route_list = "\n".join(f"- {found[route_id]}" for route_id in sorted(found))
-        send_notification(
-            f"Machupicchu tickets available for {target_label}",
-            f"Tu Boleto lists tickets for {target_label}:\n\n{route_list}\n\nBook at {BOOKING_URL}",
-        )
-        print("Availability email sent")
-    save_notified(target, set(found))
+    send_email(config, subject, body)
+    save_ever_available(TARGET_DATE, ever_available)
+    print("Daily email sent")
 
 
 if __name__ == "__main__":
