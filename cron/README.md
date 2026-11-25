@@ -18,7 +18,7 @@ python ~/homeserver/cron/pull.py
 
 ### Machupicchu tickets
 
-`scripts/machupicchu.py` checks the public Tu Boleto calendar for **10 June 2027**, Circuit 2, Routes 2-A and 2-B. It sends a daily South America email to `south_america_recipients` in `config/config.py`, counting down to 21 May 2027. The current response for both routes is an empty list; any successful response that differs from it is flagged as available. Once flagged, the urgent subject stays in future daily emails. It does not buy tickets. The alert state is kept in gitignored `config/machupicchu_alerts.json`.
+`scripts/machupicchu.py` checks the public Tu Boleto calendar for **10 June 2027**, Circuit 2, Routes 2-A and 2-B. It sends a daily South America email to `south_america_recipients` in `config/config.py`, counting down to the 21 May 2027, 7:55pm San Francisco takeoff. The current response for both routes is an empty list; any successful response that differs from it is flagged as available. Once flagged, the urgent subject stays in future daily emails. It does not buy tickets. The alert state is kept in gitignored `config/machupicchu_alerts.json`.
 
 The checker uses `openssl` to decode the site's availability response. Verify `openssl` is installed on the Pi or your computer, then preview the email without sending it:
 

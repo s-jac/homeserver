@@ -24,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 API_URL = "https://api-tuboleto.cultura.pe"
 BOOKING_URL = "https://tuboleto.cultura.pe/llaqta_machupicchu"
 TARGET_DATE = date(2027, 6, 10)
-HOLIDAY_DATE = date(2027, 5, 21)
+TAKEOFF = datetime(2027, 5, 21, 19, 55, tzinfo=ZoneInfo("America/Los_Angeles"))
 STATE_FILE = BASE_DIR / "config" / "machupicchu_alerts.json"
 URGENT_SUBJECT = "TICKETS ARE AVAILABLE FOR MACCU PICCU GO BUY EM!!!!"
 
@@ -129,17 +129,27 @@ def save_ever_available(target, ever_available):
     temp.replace(STATE_FILE)
 
 
-def email_content(today, available, ever_available, responses):
-    days = (HOLIDAY_DATE - today).days
+def countdown_subject(now_ns):
+    remaining = max(0, int(TAKEOFF.timestamp()) * 1_000_000_000 - now_ns)
+    days, remaining = divmod(remaining, 86_400_000_000_000)
+    hours, remaining = divmod(remaining, 3_600_000_000_000)
+    minutes, remaining = divmod(remaining, 60_000_000_000)
+    seconds, remaining = divmod(remaining, 1_000_000_000)
+    milliseconds, nanoseconds = divmod(remaining, 1_000_000)
+    return (
+        f"South America Daily - {days} days, {hours} hours, {minutes} minutes, "
+        f"{seconds} seconds, {milliseconds} ms, {nanoseconds} ns until the holiday!"
+    )
+
+
+def email_content(now_ns, available, ever_available, responses):
     if ever_available:
         subject = URGENT_SUBJECT
-    elif days >= 0:
-        subject = f"South America Daily - {days} days until the holiday!"
     else:
-        subject = "South America Daily - The holiday has started!"
+        subject = countdown_subject(now_ns)
     status = "AVAILABLE" if available else "NOT AVAILABLE"
     body = (
-        f"Tickets are {status}, but double check here just in case: {BOOKING_URL}, "
+        f"Tickets to Maccu Piccu are currently {status}, but double check here just in case: {BOOKING_URL}, "
         "with options 10 June 2027, Circuit 2 – Classic, Route 2-A (2-B as backup), "
         "9 am, 4 tickets.\n\n"
         "Checker output:\n"
@@ -184,8 +194,7 @@ def main():
     # available so a new response shape cannot silently hide ticket sales.
     available = any(value != [] for value in responses.values())
     ever_available = load_ever_available(TARGET_DATE) or available
-    today = datetime.now(ZoneInfo("Australia/Sydney")).date()
-    subject, body = email_content(today, available, ever_available, responses)
+    subject, body = email_content(time.time_ns(), available, ever_available, responses)
     print(f"Subject: {subject}\n\n{body}")
     if args.dry_run:
         return
