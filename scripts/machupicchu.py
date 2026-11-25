@@ -174,10 +174,7 @@ def email_content(now_ns, available, ever_available, responses):
     body = (
         f"Tickets to Maccu Piccu are currently {status}, but double check here just in case: {BOOKING_URL}, "
         "with options 10 June 2027, Circuit 2 – Classic, Route 2-A (2-B as backup), "
-        "9 am, 4 tickets.\n\n"
-        "Checker output:\n"
-        + "\n".join(f"{name}: {json.dumps(value, ensure_ascii=False)}" for name, value in responses.items())
-        + "\n"
+        "9 am, 4 tickets.\n"
     )
     return subject, body
 
