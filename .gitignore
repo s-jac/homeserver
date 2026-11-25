@@ -5,5 +5,7 @@ __pycache__/
 logs/
 config/config.py
 config/jobs.json
+config/machupicchu_alerts.json
+config/machupicchu_alerts.tmp
 gunicorn.ctl
 *.log

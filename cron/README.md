@@ -16,6 +16,25 @@ python ~/homeserver/cron/pull.py
 
 `cron.py backup` runs periodically (via a cron job), dumps `crontab -l` to `crontab.txt`, and pushes the change to GitHub. The cron job that runs the backup is itself captured in `crontab.txt`, so the whole setup is self-documenting — albeit slightly circular.
 
+### Machupicchu tickets
+
+`scripts/machupicchu.py` checks the public Tu Boleto calendar for **10 June 2027** across all Machupicchu routes every two hours. When a route first has tickets, it emails the address configured in `config/config.py` via `scripts/notify.py`. It sends another alert if tickets disappear and later return. It does not buy tickets. The alert state is kept in gitignored `config/machupicchu_alerts.json`.
+
+The checker uses `openssl` to decode the site's availability response. Verify `openssl` is installed on the Pi, then test without email:
+
+```bash
+~/homeserver/venv/bin/python ~/homeserver/scripts/machupicchu.py --dry-run
+```
+
+After the new code is on the Pi, add the job to its **live** crontab and run the backup immediately so `crontab.txt` matches:
+
+```bash
+(crontab -l; echo '17 */2 * * * $HOME/homeserver/venv/bin/python $HOME/homeserver/scripts/machupicchu.py >> $HOME/homeserver/logs/machupicchu.log 2>&1') | crontab -
+~/homeserver/venv/bin/python ~/homeserver/cron/cron.py backup
+```
+
+Email requires `email["enabled"] = True` and a valid Gmail app password in `config/config.py`.
+
 ## Usage
 
 ```
